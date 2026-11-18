@@ -1,70 +1,85 @@
-# 外部解析源实测清单（2026-11-18）
+# 外部解析源实测清单
 
-本地 `curl` 实测，超时 12 秒，跟随重定向。**结论在最后一节。**
+> 结论先行：**第三方站在纯 GET 下不吐直链，无法参与自动竞速。** 真正的竞速跑在自建服务器与两条官方直连之间，见 `bili_net.py`。
 
-## 一、公开在线解析站
+---
 
-| 站点 | 首页 | 响应 | 备注 |
-|---|---|---|---|
-| `vtool.pro/bilibili.html` | 200 | **1.35s** | 本次实测**最快**，页面轻（14KB） |
-| `v2ob.com` | 301 | 0.38s | 重定向跳转，业务正常 |
-| `bilibili.iiilab.com` | 301 | 0.59s | 老牌站，跳转后正常 |
-| `kedou.life` | 200 | **12s+（超时）** | 12 秒才收到 4.7KB，极慢 |
-| `6li6.com/bilibili` | 200 | **12s+（超时）** | 同上，慢 |
-| `greenvideo.cc` | 000 | 12s 超时 | 本机连不上（可能被墙或已迁移） |
-| `www.videofk.com` | 403 | — | nginx 直接拒绝，挡非浏览器 |
-| `xbeibeix.com` | 部分 | 12s 超时 | 回了 673 字节 HTML，能连但极慢 |
-| `www.xiazaitool.com/blbl` | 200 | 正常 | 用户举例的站，**批量需会员** |
-| `bili.1s.fan` | **DNS 失败** | — | **域名已挂**；源码仍在 GitHub |
+## 一、2026-11 实测：13 个站点的真实产出
 
-### xiazaitool 的机制（已逆向确认）
+用同一条视频（`BV1fAZtYoEnW`），纯 GET 带 `?url=` 参数，9 秒超时，检查响应里是否出现可用的媒体地址。
+
+| 站点 | 状态 | 耗时 | 直链 | 结论 |
+|---|---|---|---|---|
+| `v2ob.com` | 200 | 1.2s | **0** | 9.9 万字节页面，零直链痕迹 |
+| `bilibili.iiilab.com` | 200 | 4.8s | **0** | 21.3 万字节，全是 FAQ 与验证码字样 |
+| `snapany.com` | 200 | 3.1s | **0** | 与 iiilab 同字节数，同一套页面骨架 |
+| `videofk.com` | 200 | 4.3s | **0** | 页面能开，关掉参数时直链在 4 秒后超时 |
+| `vtool.pro` | 200 | 1.0s | 0 | 页面轻快，但直链要前端交互 |
+| `zhouql.vip` | 200 | 0.2s | 0 | 需交互 |
+| `xbeibeix.com` | 超时 | 10.6s | 0 | 极慢 |
+| `kedou.life` | 连接错误 | 1.7s | 0 | 域名可用性不稳 |
+| `6li6.com` | 超时 | 15.7s | 0 | 极慢 |
+| `greenvideo.cc` | 超时 | 9.6s | 0 | 连不上 |
+| `guoxingjun.com` | 403 | 0.6s | 0 | 直接拒绝 |
+| `jjbilibili.com` | 连接错误 | 0.9s | 0 | — |
+| `bilibiliq.com` | 404 | 1.0s | 0 | 只有封面提取 |
+
+**四个页面里出现的疑似直链全是误报** —— 是页面自身资源或示例数据，实际下载验证时全部失败。
+
+### 为什么它们绕不过去
+
+B 站直链与字幕都要登录态或前端交互。这些站的通用做法是：页面用 JS 提交、过验证码、再由它自己的服务器去换直链。**没有人工点一下这一步，它们什么也不给。**
+
+---
+
+## 二、真正在做竞速的四条路
+
+这些是实测过、能自动跑、失败会明确报错的：
+
+| 路 | 来源 | 实测 |
+|---|---|---|
+| 1 | 自建服务器 `/playurl` | 需端口可达；把风控挪到服务器 IP |
+| 2 | 官方 `wbi/playurl` | 有 WBI 签名 |
+| 3 | 官方 `playurl`（旧路径） | 0.2s 成功，本次测试的胜者 |
+| 4 | dash 里的 `backupUrl` | B 站自己给的备用 CDN，主地址失败时自动换 |
+
+第 3、4 条尤其容易被忽略：**一次 playurl 返回里就带 2~3 个备用 CDN 地址**，这本身就是天然的冗余，不需要任何第三方。
+
+实测一次完整竞速：
 
 ```
-端点：POST /video/parseVideoUrl
-签名：params = SHA256("bf5941f27ee14d9ba9ebb72d89de5dea" + url + "bilibili")
-鉴权：Header Authorization: token + withCredentials cookie
-返回：{ data: { voideDeatilVoList: [{ url, title, type }] } }
+trail: plain ok 0.2s
+source: direct        audio=3  video=8
+候选地址（主 + 备用CDN）: 3 个
+  upos-sz-estgoss.bilivideo.com
+  upos-sz-estgoss.bilivideo.com
+  upos-sz-mirroralib.bilivideo.com
+取到 65536 字节，成功
 ```
 
-**只返回视频/图片直链 + 标题**。全文搜过，无 `subtitle`、无 `danmaku`、无 `cid`、无 `desc`。
-它把 B 站风控换成"付费配额"（`leftTimes` / 会员 / `status 407`）。
+---
 
-## 二、可自部署的开源项目（推荐路线）
+## 三、可自部署的开源替代（比第三方站可靠）
+
+如果想让"自建"这一路更强，这两个能自己跑起来，等价于多一台自己的服务器：
 
 | 项目 | 形态 | 说明 |
 |---|---|---|
 | `wu529778790/parse.shenzjd.com` | Node.js | 多平台，支持 Docker / Cloudflare Workers 一键部署 |
-| `FrecklyComb1728/BiliParser` | 原生 Node，零依赖 | 接口 `GET /api/any?text=BVxxx&qn=80`，Vercel 可部署 |
+| `FrecklyComb1728/BiliParser` | 原生 Node，零依赖 | `GET /api/any?text=BVxxx&qn=80`，可直接跑在 ECS 上 |
 
-这两个的意义：**把解析能力搬到自己的 IP 上**，不依赖别人家的站会不会挂。
-
-## 三、API / 服务类
-
-| 来源 | 形态 | 成本 |
-|---|---|---|
-| `xiaoapis.com/api/video/videoparse` | 付费 HTTP API | 约 0.01 元/次，20 QPS，免费 10 次 |
-| `polylens-bilibili-mcp`（PyPI） | 本地 MCP 服务 | 免费，能取**字幕 / 评论 / 视频信息**，需扫码登录 |
-
-`polylens-bilibili-mcp` 值得单独注意：它已经把 `get_subtitles`、`get_comments`、`get_video_info`、`search_videos` 都封装好了，且支持 HTTP + OAuth 远程接入。适合做**第二数据源交叉验证**。
+比依赖别人家的站稳，因为**它挂了你能重启，它限流你能加机器**。
 
 ---
 
-## 四、结论（实话）
+## 四、什么时候才用第三方站
 
-**这些公开站，对你的场景大部分没有用。** 原因：
+只有一个场景：**自建和直连全挂了，你又急着要某个视频的文件**。
 
-1. **慢** —— 主力站点实测 12 秒超时才勉强回包，做批量采集完全不现实
-2. **有验证码 / 会员限次** —— 免费额度就是给你手动点几下
-3. **只给文件，不给文字** —— 你要的是字幕和评论，它们基本不给
-4. **寿命不可控** —— `bili.1s.fan` 已经挂了，`videofk` 已经挡爬虫
+这时人工打开其中一个（推荐顺序）：
 
-所以正确的职责划分是：
+1. `vtool.pro` —— 页面最轻，1 秒打开
+2. `v2ob.com` —— 1.2 秒
+3. `bilibili.iiilab.com` —— 4.8 秒，功能全
 
-| 用途 | 用什么 |
-|---|---|
-| 元数据 / 评论 / 字幕 | **自建采集器**（`harvest.py`，已部署在你的 ECS） |
-| 视频/音频直链 | **自建解析服务**（`parse_svc.py`，已部署） |
-| 低频兜底（某条视频要音频做 ASR） | 公开站，人工触发，`vtool.pro` 优先 |
-| 交叉验证 / 备用数据源 | `polylens-bilibili-mcp` |
-
-**公开站是备胎，不是主力。** 主力必须是自己能控制的机器 —— 这也是为什么"用你的小服务器作为其中之一"是对的，而且应该作为**唯一主力**。
+面板上的「第三方网站」模式就是给这个场景留的，它不会自动跑。

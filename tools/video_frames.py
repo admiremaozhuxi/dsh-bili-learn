@@ -46,6 +46,11 @@ UA = (
     "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 )
 API = "https://api.bilibili.com"
+
+# 同目录的竞速模块；脚本可能从任意工作目录被调用，所以按自身位置找
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import bili_net  # noqa: E402
+
 DEFAULT_PROMPT = (
     "用一到两句中文描述这张视频画面：场景、人物或物体在做什么、"
     "屏幕上出现的文字或界面元素。只描述看得见的，不要推测剧情或意图。"
@@ -130,18 +135,16 @@ def resolve(bvid):
 
 
 def lowest_video_url(bvid, cid):
-    d = get_json(
-        f"{API}/x/player/playurl?bvid={bvid}&cid={cid}&qn=16&fnval=16",
-        referer=f"https://www.bilibili.com/video/{bvid}",
-    )
-    if d.get("code") != 0:
-        return None, None, f"playurl {d.get('code')} {d.get('message')}"
-    dash = (d.get("data") or {}).get("dash") or {}
-    videos = dash.get("video") or []
-    if not videos:
+    """自建服务器优先；不通时两条直连并行竞速。见 bili_net。"""
+    dash, trail = bili_net.resolve(bvid, cid)
+    if not dash:
+        return None, None, " / ".join(trail)
+    v = bili_net.pick_stream(dash, "video", lowest=True)
+    if not v:
         return None, None, "no video track"
-    videos.sort(key=lambda v: v.get("bandwidth") or 0)
-    v = videos[0]
+    log = " / ".join(trail)
+    if log:
+        print(f"[i] 直链来源 {dash.get('source')}（{log}）", file=sys.stderr)
     return v.get("baseUrl"), v, None
 
 

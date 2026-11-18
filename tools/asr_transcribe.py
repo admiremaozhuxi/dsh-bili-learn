@@ -44,6 +44,10 @@ API = "https://api.bilibili.com"
 DEFAULT_BASE = "https://api.siliconflow.cn/v1"
 DEFAULT_MODEL = "FunAudioLLM/SenseVoiceSmall"
 
+# 同目录的竞速模块；脚本可能从任意工作目录被调用，所以按自身位置找
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import bili_net  # noqa: E402
+
 
 def headers(referer=None):
     h = {
@@ -108,19 +112,17 @@ def resolve_meta(bvid: str):
 
 
 def audio_url(bvid: str, cid: int):
-    d = get_json(
-        f"{API}/x/player/playurl?bvid={bvid}&cid={cid}&qn=32&fnval=16",
-        referer=f"https://www.bilibili.com/video/{bvid}",
-    )
-    if d.get("code") != 0:
-        return None, f"playurl {d.get('code')} {d.get('message')}"
-    dash = (d.get("data") or {}).get("dash") or {}
-    audio = dash.get("audio") or []
-    if not audio:
+    """自建服务器优先；不通时两条直连并行竞速。见 bili_net。"""
+    dash, trail = bili_net.resolve(bvid, cid)
+    if not dash:
+        return None, " / ".join(trail)
+    a = bili_net.pick_stream(dash, "audio", lowest=False)
+    if not a:
         return None, "no audio track"
-    # 取码率最高的一条
-    audio.sort(key=lambda a: a.get("bandwidth") or 0, reverse=True)
-    return audio[0].get("baseUrl"), None
+    log = " / ".join(trail)
+    if log:
+        print(f"    直链来源 {dash.get('source')}（{log}）")
+    return a.get("baseUrl"), None
 
 
 def transcribe(base: str, key: str, data: bytes, model: str, filename: str):
