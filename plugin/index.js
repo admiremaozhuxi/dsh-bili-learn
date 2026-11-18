@@ -43,31 +43,77 @@ const SETTINGS_FILE = path.join(homedir(), '.dsh-bili-learn', 'settings.json')
  */
 const HARVEST_ROOT = path.join(homedir(), '.dsh-bili-learn', 'harvests')
 
+/**
+ * 所有「标量设置」的唯一来源。
+ *
+ * 以前每加一个设置项要改十处：默认值、view 返回、POST 校验、bili_config 的
+ * 参数/schema/render/execute/返回、采集读取、面板 state/加载/保存/UI。
+ * 漏一处就是一个静默 bug——前端拿不到、或者写进去不生效。
+ *
+ * 现在默认值和校验都从这里派生，加一项只改这里一行。
+ * bili_config 的参数描述仍手写：那是给模型读的措辞，不适合从规格生成。
+ */
+const SETTING_SPECS = {
+  videoConcurrency: { kind: 'int', lo: 1, hi: 12, dflt: 3 },
+  agentsPerVideoMin: { kind: 'int', lo: 1, hi: 8, dflt: 2 },
+  agentsPerVideoMax: { kind: 'int', lo: 1, hi: 8, dflt: 4 },
+  maxTotalAgents: { kind: 'int', lo: 1, hi: 24, dflt: 12 },
+  maxAttempts: { kind: 'int', lo: 1, hi: 60, dflt: 30 },
+  transcribeCap: { kind: 'int', lo: 0, hi: 10, dflt: 3 },
+  framesCap: { kind: 'int', lo: 0, hi: 10, dflt: 2 },
+  framesPerVideo: { kind: 'int', lo: 1, hi: 8, dflt: 3 },
+  gapMs: { kind: 'int', lo: 300, hi: 5000, dflt: 1200 },
+  fillByTranscribe: { kind: 'bool', dflt: false },
+  fillByFrames: { kind: 'bool', dflt: false },
+}
+
+/** 默认值：从规格派生，避免两张表各写一遍而对不上。 */
+function scalarDefaults() {
+  const out = {}
+  for (const [k, sp] of Object.entries(SETTING_SPECS)) out[k] = sp.dflt
+  return out
+}
+
+/** 面板要看的标量：同样派生，漏字段会导致前端拿不到值。 */
+function scalarView(s) {
+  const out = {}
+  for (const [k, sp] of Object.entries(SETTING_SPECS)) {
+    out[k] = sp.kind === 'bool' ? Boolean(s[k]) : Number(s[k] ?? sp.dflt)
+  }
+  return out
+}
+
+/**
+ * 按规格校验一批写入。返回能用的 patch 和被拒的字段名。
+ * 被拒的字段不写进去，也不会把整批都丢掉。
+ */
+function coerceScalars(raw) {
+  const patch = {}
+  const rejected = []
+  for (const [k, sp] of Object.entries(SETTING_SPECS)) {
+    if (!(k in raw)) continue
+    const v = raw[k]
+    if (sp.kind === 'bool') {
+      if (typeof v === 'boolean') patch[k] = v
+      else rejected.push(k)
+      continue
+    }
+    const n = Number(v)
+    if (Number.isFinite(n) && n >= sp.lo && n <= sp.hi) patch[k] = Math.round(n)
+    else rejected.push(k)
+  }
+  return { patch, rejected }
+}
+
 const DEFAULT_SETTINGS = {
   mode: 'auto',
-  concurrency: 4,
+  concurrency: 4, // 旧字段，仅作兼容读取
   endpoint: 'http://127.0.0.1:8848',
   cookie: '',
   proxies: [],
-  gapMs: 1200,
   disabledSources: [],
   customSources: [],
-  // 阅读编排：同时读几个视频、每个视频分几个 AI（区间）、AI 总数硬上限
-  videoConcurrency: 3,
-  agentsPerVideoMin: 2,
-  agentsPerVideoMax: 4,
-  maxTotalAgents: 12,
-  // 采集时最多尝试几个视频。没字幕的会跳过并继续找下一个，这是硬上限
-  maxAttempts: 30,
-  // 没字幕轨时是否改用音频转写补正文。慢（约等于音频时长），默认关
-  fillByTranscribe: false,
-  // 开启转写后最多补几条，防止一次跑太久
-  transcribeCap: 3,
-  // 没字幕轨时是否抽帧看画面。比转写更贵：每帧一次视觉调用，还要先下视频
-  fillByFrames: false,
-  // 补几条、每条抽几帧
-  framesCap: 2,
-  framesPerVideo: 3,
+  ...scalarDefaults(),
 }
 
 /* ------------------------------------------------------------------ settings */
@@ -1804,11 +1850,19 @@ async function probeAll() {
  * 原本在三个地方各写一遍（独立子命令 / set 解析 / 状态摘要），改范围要改三处，
  * 而且摘要两处的措辞已经不一致了。
  */
+/**
+ * 命令层的数字参数。label 是给人看的措辞，范围统一从 SETTING_SPECS 取——
+ * 否则同一个范围要在两处维护，改一处忘一处就会变成「命令说 1-12、实际校验 1-8」。
+ */
 const NUMERIC_SPECS = {
-  videos: { field: 'videoConcurrency', lo: 1, hi: 12, label: '同时阅读视频数' },
-  total: { field: 'maxTotalAgents', lo: 1, hi: 24, label: 'AI 总数上限' },
-  gap: { field: 'gapMs', lo: 300, hi: 5000, label: '请求间隔' },
-  attempts: { field: 'maxAttempts', lo: 1, hi: 60, label: '最多尝试视频数' },
+  videos: { field: 'videoConcurrency', label: '同时阅读视频数' },
+  total: { field: 'maxTotalAgents', label: 'AI 总数上限' },
+  gap: { field: 'gapMs', label: '请求间隔' },
+  attempts: { field: 'maxAttempts', label: '最多尝试视频数' },
+}
+for (const spec of Object.values(NUMERIC_SPECS)) {
+  spec.lo = SETTING_SPECS[spec.field].lo
+  spec.hi = SETTING_SPECS[spec.field].hi
 }
 
 function checkNumber(raw, spec) {
@@ -2058,12 +2112,11 @@ function registerHttpApi(ctx) {
 
   const view = (s) => ({
     mode: s.mode,
+    // 标量全部从 SETTING_SPECS 派生。以前这里手写，加设置时漏了 5 个字段，
+    // 表现是面板保存成功、重开却显示默认值——因为读的时候没返回。
+    ...scalarView(s),
+    // 旧配置只有 concurrency，没有 videoConcurrency，这里兜一下
     videoConcurrency: s.videoConcurrency ?? s.concurrency ?? 3,
-    agentsPerVideoMin: s.agentsPerVideoMin ?? 2,
-    agentsPerVideoMax: s.agentsPerVideoMax ?? 4,
-    maxTotalAgents: s.maxTotalAgents ?? 12,
-    maxAttempts: s.maxAttempts ?? 30,
-    gapMs: s.gapMs,
     endpoint: s.endpoint || '',
     hasCookie: Boolean(s.cookie),
     settingsFile: SETTINGS_FILE,
@@ -2114,50 +2167,11 @@ function registerHttpApi(ctx) {
               }
               const cleanPatch = {}
               if (patch && typeof patch === 'object') {
-                if (
-                  typeof patch.mode === 'string' &&
-                  ['default', 'direct', 'self', 'proxy', 'auto'].includes(patch.mode)
-                ) {
-                  cleanPatch.mode = patch.mode
-                }
-                const conc = Number(patch.videoConcurrency)
-                if (Number.isFinite(conc)) {
-                  cleanPatch.videoConcurrency = Math.min(Math.max(Math.round(conc), 1), 12)
-                }
-                const aMin = Number(patch.agentsPerVideoMin)
-                if (Number.isFinite(aMin)) {
-                  cleanPatch.agentsPerVideoMin = Math.min(Math.max(Math.round(aMin), 1), 8)
-                }
-                const aMax = Number(patch.agentsPerVideoMax)
-                if (Number.isFinite(aMax)) {
-                  cleanPatch.agentsPerVideoMax = Math.min(Math.max(Math.round(aMax), 1), 8)
-                }
-                const aTot = Number(patch.maxTotalAgents)
-                if (Number.isFinite(aTot)) {
-                  cleanPatch.maxTotalAgents = Math.min(Math.max(Math.round(aTot), 1), 24)
-                }
-                const attempts = Number(patch.maxAttempts)
-                if (Number.isFinite(attempts)) {
-                  cleanPatch.maxAttempts = Math.min(Math.max(Math.round(attempts), 1), 60)
-                }
-                if (typeof patch.fillByTranscribe === 'boolean') {
-                  cleanPatch.fillByTranscribe = patch.fillByTranscribe
-                }
-                const tcap = Number(patch.transcribeCap)
-                if (Number.isFinite(tcap)) {
-                  cleanPatch.transcribeCap = Math.min(Math.max(Math.round(tcap), 0), 10)
-                }
-                if (typeof patch.fillByFrames === 'boolean') {
-                  cleanPatch.fillByFrames = patch.fillByFrames
-                }
-                const fcap = Number(patch.framesCap)
-                if (Number.isFinite(fcap)) {
-                  cleanPatch.framesCap = Math.min(Math.max(Math.round(fcap), 0), 10)
-                }
-                const fpv = Number(patch.framesPerVideo)
-                if (Number.isFinite(fpv)) {
-                  cleanPatch.framesPerVideo = Math.min(Math.max(Math.round(fpv), 1), 8)
-                }
+                // 标量统一按 SETTING_SPECS 校验，范围只在规格里写一次。
+                // 以前每个字段手写一段，加一个就要多抄一段，还容易把范围抄错。
+                const { patch: scalars } = coerceScalars(patch)
+                Object.assign(cleanPatch, scalars)
+
                 // 区间要自洽：min 不得大于 max
                 if (cleanPatch.agentsPerVideoMin !== undefined || cleanPatch.agentsPerVideoMax !== undefined) {
                   const lo = cleanPatch.agentsPerVideoMin ?? 2
@@ -2167,9 +2181,13 @@ function registerHttpApi(ctx) {
                     cleanPatch.agentsPerVideoMax = lo
                   }
                 }
-                const gap = Number(patch.gapMs)
-                if (Number.isFinite(gap)) {
-                  cleanPatch.gapMs = Math.min(Math.max(Math.round(gap), 300), 5000)
+
+                // 非标量：枚举、字符串、数组，各自有各自的校验
+                if (
+                  typeof patch.mode === 'string' &&
+                  ['default', 'direct', 'self', 'proxy', 'auto'].includes(patch.mode)
+                ) {
+                  cleanPatch.mode = patch.mode
                 }
                 if (typeof patch.endpoint === 'string') cleanPatch.endpoint = patch.endpoint.trim()
                 if (typeof patch.cookie === 'string') cleanPatch.cookie = patch.cookie.trim()
