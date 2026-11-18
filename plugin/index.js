@@ -345,7 +345,9 @@ async function getSubtitles(bvid, cid, opts) {
  */
 async function getComments(aid, opts, { limit = 20, maxPages = 1 } = {}) {
   if (!aid) return { items: [], trace: 'no_aid', pages: 0 }
-  const per = Math.min(Math.max(limit, 1), 49)
+  // 实测（2026-11-18）：x/v2/reply 的 ps 超过 20 直接返回 -400。
+  // 想要更多条靠翻页（下面的 pn 循环），不是靠放大 ps。
+  const per = Math.min(Math.max(limit, 1), 20)
   const out = []
   let pages = 0
   for (let pn = 1; pn <= Math.max(1, maxPages); pn += 1) {
@@ -379,7 +381,8 @@ async function getCommentReplies(aid, root, opts, { limit = 8 } = {}) {
   if (!aid || !root) return { items: [], trace: 'bad_args' }
   const url =
     `${API}/x/v2/reply/reply?type=1&oid=${aid}&root=${root}` +
-    `&ps=${Math.min(Math.max(limit, 1), 49)}&pn=1`
+    // 同主评论接口：ps 上限实测是 20，超过返回 -400
+    `&ps=${Math.min(Math.max(limit, 1), 20)}&pn=1`
   const d = await getJson(url, opts)
   if (d.code !== 0) return { items: [], trace: `api_code_${d.code}` }
   const reps = (d?.data?.replies) || []
