@@ -15,12 +15,12 @@
   },
   "versions": [
     {
-      "version": "0.2.1",
-      "publishTimestamp": 1795007626,
+      "version": "0.2.2",
+      "publishTimestamp": 1795010362,
       "source": {
         "type": "git",
         "url": "https://github.com/admiremaozhuxi/dsh-bili-learn",
-        "commit": "da0793c051272121fe3cfcca60930acec67ec1e8",
+        "commit": "01dd49642e41393ead3987ca7fe64733fffcfb00",
         "path": "plugin"
       }
     }
