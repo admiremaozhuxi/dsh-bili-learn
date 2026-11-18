@@ -63,6 +63,11 @@ const DEFAULT_SETTINGS = {
   fillByTranscribe: false,
   // 开启转写后最多补几条，防止一次跑太久
   transcribeCap: 3,
+  // 没字幕轨时是否抽帧看画面。比转写更贵：每帧一次视觉调用，还要先下视频
+  fillByFrames: false,
+  // 补几条、每条抽几帧
+  framesCap: 2,
+  framesPerVideo: 3,
 }
 
 /* ------------------------------------------------------------------ settings */
@@ -502,11 +507,17 @@ async function harvest(args, settings) {
   const results = []
   const skipped = []
   const transcribed = []
+  const framed = []
   let tried = 0
   // 没字幕时改用音频转写：慢（约等于音频时长），所以默认关，且限量
   const fillByAsr = args.fillByTranscribe === true || settings.fillByTranscribe === true
   const asrCap = Math.min(Math.max(Number(settings.transcribeCap) || 3, 0), 10)
   let asrUsed = 0
+  // 抽帧比转写贵：每帧一次视觉调用，还要先下视频。所以上限更小
+  const fillByFrames = args.fillByFrames === true || settings.fillByFrames === true
+  const framesCap = Math.min(Math.max(Number(settings.framesCap) || 2, 0), 10)
+  const framesPerVideo = Math.min(Math.max(Number(settings.framesPerVideo) || 3, 1), 8)
+  let framesUsed = 0
 
   for (const v of candidates) {
     if (results.length >= maxVideos) break
@@ -520,8 +531,9 @@ async function harvest(args, settings) {
       if (withComments) comments = await getComments(v.aid, opts, { limit: 20, maxPages: 1 })
     }
 
-    // 没有字幕轨不等于没有内容——口播可以转写。只是逐条转写太慢，
-    // 所以按开关和上限来，转成功的当作正文用。
+    // 没有字幕轨不等于没有内容——口播可以转写，画面可以抽帧看。
+    // 顺序是有意的：转写便宜（一次调用），抽帧贵（每帧一次视觉调用），
+    // 所以先试转写，它拿不到东西再看画面。
     if (!subs.lines.length && fillByAsr && page?.cid && asrUsed < asrCap) {
       try {
         const tr = await transcribeAudio(v.bvid, page.cid, settings)
@@ -537,7 +549,30 @@ async function harvest(args, settings) {
           asrUsed += 1
         }
       } catch {
-        /* 转写失败按无内容处理 */
+        /* 转写失败，继续看画面 */
+      }
+    }
+
+    if (!subs.lines.length && fillByFrames && page?.cid && framesUsed < framesCap) {
+      try {
+        const ff = await ensureFfmpeg()
+        const fr = await readFrames(v.bvid, page.cid, page.duration || 0, settings, {
+          maxFrames: framesPerVideo,
+          ffmpegPath: ff.path,
+        })
+        if (fr.ok && String(fr.markdown || '').trim().length >= 30) {
+          subs = {
+            lines: String(fr.markdown)
+              .split(/\n+/)
+              .filter(Boolean)
+              .map((t) => ({ from: 0, to: 0, text: t })),
+            trace: `画面(${fr.frames}帧)`,
+          }
+          framed.push(v.bvid)
+          framesUsed += 1
+        }
+      } catch {
+        /* 抽帧失败按无内容处理 */
       }
     }
 
@@ -593,11 +628,25 @@ async function harvest(args, settings) {
           ? '它们没有字幕轨，可以对其中几条调用 bili_transcribe 转写，或用 bili_frames 看画面。'
           : '字幕需要登录态，先扫码登录；也可以对单条调用 bili_transcribe —— 转写不需要登录。')
       : `试了 ${tried} 个视频都没取到内容。`
-    return { ok: false, mode: effective, dir, count: 0, tried, skipped, transcribed, videos: [], note: why }
+    return {
+      ok: false,
+      mode: effective,
+      dir,
+      count: 0,
+      tried,
+      skipped,
+      transcribed,
+      framed,
+      videos: [],
+      note: why,
+    }
   }
 
   if (transcribed.length) {
     notes.push(`其中 ${transcribed.length} 个没有字幕轨，已用音频转写补上。`)
+  }
+  if (framed.length) {
+    notes.push(`另有 ${framed.length} 个是抽帧看画面拿到的，不是原字幕。`)
   }
   if (skipped.length) {
     const list = skipped.slice(0, 5).map((s) => s.bvid).join(', ')
@@ -616,6 +665,7 @@ async function harvest(args, settings) {
     tried,
     skipped,
     transcribed,
+    framed,
     videos: results,
     note: notes.join(' '),
   }
@@ -729,6 +779,8 @@ function registerTools(ctx) {
             count: { type: 'integer' },
             tried: { type: 'integer' },
             skipped: { type: 'array', items: { type: 'object' } },
+            transcribed: { type: 'array', items: { type: 'string' } },
+            framed: { type: 'array', items: { type: 'string' } },
             mode: { type: 'string' },
             note: { type: 'string' },
             videos: { type: 'array', items: { type: 'object' } },
@@ -1028,6 +1080,30 @@ function registerTools(ctx) {
             type: 'integer',
             description: '开启转写后一次最多补几条。0-10。',
           },
+          fillByFrames: {
+            type: 'boolean',
+            description: '没字幕轨时是否抽帧看画面。比转写贵得多（每帧一次视觉调用），默认 false。',
+          },
+          framesCap: {
+            type: 'integer',
+            description: '抽帧最多补几条视频。0-10。',
+          },
+          framesPerVideo: {
+            type: 'integer',
+            description: '每条视频抽几帧。1-8。',
+          },
+          fillByFrames: {
+            type: 'boolean',
+            description: '没字幕轨时是否抽帧看画面。比转写贵得多（每帧一次视觉调用），默认 false。',
+          },
+          framesCap: {
+            type: 'integer',
+            description: '抽帧最多补几条视频。0-10。',
+          },
+          framesPerVideo: {
+            type: 'integer',
+            description: '每条视频抽几帧。1-8。',
+          },
           endpoint: { type: 'string', description: 'Self-hosted parse service base URL.' },
           cookie: { type: 'string', description: 'Bilibili login cookie, normally the SESSDATA pair.' },
           proxies: { type: 'array', items: { type: 'string' }, description: 'Third-party parser base URLs.' },
@@ -1046,6 +1122,9 @@ function registerTools(ctx) {
             maxAttempts: { type: 'integer' },
             fillByTranscribe: { type: 'boolean' },
             transcribeCap: { type: 'integer' },
+            fillByFrames: { type: 'boolean' },
+            framesCap: { type: 'integer' },
+            framesPerVideo: { type: 'integer' },
             endpoint: { type: 'string' },
             cookieSet: { type: 'boolean' },
             proxies: { type: 'array', items: { type: 'string' } },
@@ -1061,6 +1140,7 @@ function registerTools(ctx) {
               `AI 总数上限：${value.maxTotalAgents}`,
               `最多尝试视频数：${value.maxAttempts}`,
               `没字幕时转写补齐：${value.fillByTranscribe ? `开（最多 ${value.transcribeCap} 条）` : '关'}`,
+              `没字幕时抽帧看画面：${value.fillByFrames ? `开（最多 ${value.framesCap} 条，每条约 ${value.framesPerVideo} 帧）` : '关'}`,
               `自建服务器：${value.endpoint}`,
               `登录凭证：${value.cookieSet ? '已配置' : '未配置（字幕为空）'}`,
               `第三方池：${(value.proxies || []).length ? value.proxies.join(', ') : '（空）'}`,
@@ -1093,6 +1173,13 @@ function registerTools(ctx) {
         if (args.transcribeCap !== undefined) {
           patch.transcribeCap = Math.min(Math.max(Number(args.transcribeCap), 0), 10)
         }
+        if (typeof args.fillByFrames === 'boolean') patch.fillByFrames = args.fillByFrames
+        if (args.framesCap !== undefined) {
+          patch.framesCap = Math.min(Math.max(Number(args.framesCap), 0), 10)
+        }
+        if (args.framesPerVideo !== undefined) {
+          patch.framesPerVideo = Math.min(Math.max(Number(args.framesPerVideo), 1), 8)
+        }
         if (patch.agentsPerVideoMin && patch.agentsPerVideoMax && patch.agentsPerVideoMin > patch.agentsPerVideoMax) {
           const lo = patch.agentsPerVideoMin
           patch.agentsPerVideoMin = patch.agentsPerVideoMax
@@ -1111,6 +1198,9 @@ function registerTools(ctx) {
           maxAttempts: s.maxAttempts ?? 30,
     fillByTranscribe: Boolean(s.fillByTranscribe),
     transcribeCap: s.transcribeCap ?? 3,
+    fillByFrames: Boolean(s.fillByFrames),
+    framesCap: s.framesCap ?? 2,
+    framesPerVideo: s.framesPerVideo ?? 3,
           endpoint: s.endpoint,
           cookieSet: Boolean(s.cookie),
           proxies: s.proxies || [],
@@ -2056,6 +2146,17 @@ function registerHttpApi(ctx) {
                 const tcap = Number(patch.transcribeCap)
                 if (Number.isFinite(tcap)) {
                   cleanPatch.transcribeCap = Math.min(Math.max(Math.round(tcap), 0), 10)
+                }
+                if (typeof patch.fillByFrames === 'boolean') {
+                  cleanPatch.fillByFrames = patch.fillByFrames
+                }
+                const fcap = Number(patch.framesCap)
+                if (Number.isFinite(fcap)) {
+                  cleanPatch.framesCap = Math.min(Math.max(Math.round(fcap), 0), 10)
+                }
+                const fpv = Number(patch.framesPerVideo)
+                if (Number.isFinite(fpv)) {
+                  cleanPatch.framesPerVideo = Math.min(Math.max(Math.round(fpv), 1), 8)
                 }
                 // 区间要自洽：min 不得大于 max
                 if (cleanPatch.agentsPerVideoMin !== undefined || cleanPatch.agentsPerVideoMax !== undefined) {

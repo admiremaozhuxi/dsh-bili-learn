@@ -198,6 +198,9 @@ window.__ModuleLoader__.load({
       const [attempts, setAttempts] = useState(30)
       const [fillAsr, setFillAsr] = useState(false)
       const [asrCap, setAsrCap] = useState(3)
+      const [fillFrames, setFillFrames] = useState(false)
+      const [framesCap, setFramesCap] = useState(2)
+      const [framesPer, setFramesPer] = useState(3)
       const [gap, setGap] = useState(1200)
       const [advanced, setAdvanced] = useState(false)
       const [status, setStatus] = useState('')   // '' | 'saving' | 'saved' | 'error'
@@ -332,6 +335,9 @@ window.__ModuleLoader__.load({
               setAttempts(d.settings.maxAttempts ?? 30)
               setFillAsr(Boolean(d.settings.fillByTranscribe))
               setAsrCap(d.settings.transcribeCap ?? 3)
+              setFillFrames(Boolean(d.settings.fillByFrames))
+              setFramesCap(d.settings.framesCap ?? 2)
+              setFramesPer(d.settings.framesPerVideo ?? 3)
               setGap(d.settings.gapMs || 1200)
               setEndpoint(d.settings.endpoint || '')
               setDisabled(d.settings.disabledSources || [])
@@ -374,6 +380,9 @@ window.__ModuleLoader__.load({
             maxAttempts: attempts,
             fillByTranscribe: fillAsr,
             transcribeCap: asrCap,
+            fillByFrames: fillFrames,
+            framesCap: framesCap,
+            framesPerVideo: framesPer,
             gapMs: gap,
             endpoint,
             disabledSources: disabled,
@@ -659,6 +668,43 @@ window.__ModuleLoader__.load({
           ),
           h('div', { style: { fontSize: 11.5, color: V.sub, lineHeight: 1.7, marginTop: 6 } },
             '不想等也可以关掉，事后对具体某条视频单独用 bili_transcribe 或 bili_frames。'),
+        ),
+
+        h(Label, null, '没字幕时抽帧看画面'),
+        h(
+          'div',
+          {
+            style: {
+              background: V.card, border: `1px solid ${V.line}`, borderRadius: 8,
+              padding: '12px 14px', marginBottom: 20,
+            },
+          },
+          h(
+            'label',
+            { style: { display: 'flex', alignItems: 'center', gap: 9, cursor: 'pointer' } },
+            h('input', {
+              type: 'checkbox',
+              checked: fillFrames,
+              onChange: () => { setFillFrames((v) => !v); setStatus('') },
+              style: { accentColor: V.brand, margin: 0 },
+            }),
+            h('span', { style: { fontSize: 12.5, color: V.text } }, '没有字幕轨时，抽几帧让 AI 看画面'),
+          ),
+          h('div', { style: { fontSize: 11.5, color: V.sub, lineHeight: 1.7, marginTop: 8 } },
+            '比转写贵得多：每帧一次视觉调用，还要先下载视频。所以默认关。'),
+          h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, marginTop: 8, flexWrap: 'wrap' } },
+            h('span', { style: { fontSize: 11.5, color: V.sub } }, '最多补'),
+            h(Button, { onClick: () => { setFramesCap((n) => Math.max(0, n - 1)); setStatus('') }, disabled: framesCap <= 0 }, '−'),
+            h('span', { style: { fontFamily: MONO, fontSize: 12.5, color: V.text, minWidth: 18, textAlign: 'center' } }, String(framesCap)),
+            h(Button, { onClick: () => { setFramesCap((n) => Math.min(10, n + 1)); setStatus('') }, disabled: framesCap >= 10 }, '+'),
+            h('span', { style: { fontSize: 11.5, color: V.sub, marginLeft: 4 } }, '条，每条'),
+            h(Button, { onClick: () => { setFramesPer((n) => Math.max(1, n - 1)); setStatus('') }, disabled: framesPer <= 1 }, '−'),
+            h('span', { style: { fontFamily: MONO, fontSize: 12.5, color: V.text, minWidth: 18, textAlign: 'center' } }, String(framesPer)),
+            h(Button, { onClick: () => { setFramesPer((n) => Math.min(8, n + 1)); setStatus('') }, disabled: framesPer >= 8 }, '+'),
+            h('span', { style: { fontSize: 11.5, color: V.sub, marginLeft: 4 } }, '帧'),
+          ),
+          h('div', { style: { fontSize: 11.5, color: V.sub, lineHeight: 1.7, marginTop: 6 } },
+            '画面里没有口播时（写代码、操作演示、PPT 讲解），这条比转写更划算。'),
         ),
 
         // 高级：默认收起，避免小白被「毫秒」吓到
