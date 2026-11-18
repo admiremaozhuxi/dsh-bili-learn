@@ -5,6 +5,20 @@
   "type": "module",
   "license": "MIT",
   "author": "dsh-bili-learn contributors",
+  "homepage": "https://github.com/admiremaozhuxi/dsh-bili-learn",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/admiremaozhuxi/dsh-bili-learn",
+    "directory": "plugin"
+  },
+  "keywords": [
+    "dsh-plugin",
+    "bilibili",
+    "deepseek-harness",
+    "subtitle",
+    "asr",
+    "video-understanding"
+  ],
   "description": "Treat Bilibili as a research corpus: search high-view videos, harvest subtitles and comments, hand them to subagents for study.",
   "exports": {
     ".": "./index.js",
