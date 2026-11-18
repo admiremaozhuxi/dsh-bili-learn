@@ -1,0 +1,26 @@
+{
+  "name": "dsh-bili-learn",
+  "title": "视频学习工具（B站学习器）",
+  "description": "让 AI 真正读懂 B 站视频：字幕、评论、画面、口播一次拿全。装完即用，不需要 Python、不需要 ffmpeg、不需要开开发者工具。支持多集课程（分P清单、指定第几集）、多视频并行研读（每个视频按内容长度分配若干子 agent，短片读完后空闲的 agent 转去帮长片，总并发有上限）。",
+  "author": "admiremaozhuxi",
+  "homepage": "https://github.com/admiremaozhuxi/dsh-bili-learn",
+  "repository": {
+    "url": "https://github.com/admiremaozhuxi/dsh-bili-learn",
+    "directory": "plugin"
+  },
+  "metadata": {
+    "labels": ["dsh-install-check"]
+  },
+  "versions": [
+    {
+      "version": "0.1.0",
+      "publishTimestamp": 1795000488,
+      "source": {
+        "type": "git",
+        "url": "https://github.com/admiremaozhuxi/dsh-bili-learn",
+        "commit": "0750d5a4cd528f44e9684b3d32461ff6153c9eb0",
+        "path": "plugin"
+      }
+    }
+  ]
+}
