@@ -5,7 +5,15 @@
  * { size, active } from the global panel row. The matching `main` registration
  * uses the same key, so selecting the icon switches the central column here.
  *
- * Deliberately dependency-free: plain React elements and theme tokens only.
+ * Design rules applied here (learned from two Bilibili design channels):
+ *  - Status has levels, not one flat indicator: the stronger the state, the more
+ *    position and weight it earns. Quiet facts get quiet marks.
+ *  - Uniform spacing is not the same as visual balance: monospace numbers and CJK
+ *    labels have different optical weight, so row heights, letter spacing and
+ *    numeric alignment are compensated per column rather than set once.
+ *  - Empty states are designed, never left as a bare sentence.
+ *
+ * Dependency-free on purpose: plain React elements and theme tokens only.
  */
 window.__ModuleLoader__.load({
   id: '@local/dsh-bili-learn',
@@ -13,24 +21,42 @@ window.__ModuleLoader__.load({
     const React = require('react')
     const h = React.createElement
 
-    const C = {
-      text: 'var(--dsw-alias-text-primary, #e6e6e6)',
-      dim: 'var(--dsw-alias-text-secondary, #9a9a9a)',
-      faint: 'var(--dsw-alias-text-tertiary, #6f6f6f)',
-      line: 'var(--dsw-alias-border-subtle, rgba(255,255,255,0.12))',
-      panel: 'var(--dsw-alias-bg-elevated, rgba(255,255,255,0.03))',
-      accent: '#5ec48a',
-      warn: '#e0b040',
+    /* ---------------------------------------------------------------- theme */
+
+    const T = {
+      base: 'var(--dsw-alias-bg-base, #16191c)',
+      layer1: 'var(--dsw-alias-bg-layer-1, #1c2024)',
+      layer2: 'var(--dsw-alias-bg-layer-2, #22272c)',
+      sidebar: 'var(--dsw-specific-sidebar-fill, #14171a)',
+      line1: 'var(--dsw-alias-border-l1, rgba(255,255,255,0.08))',
+      line2: 'var(--dsw-alias-border-l2, rgba(255,255,255,0.14))',
+      brand: 'var(--dsw-alias-brand-primary, #4f9cf9)',
+      text1: 'var(--dsw-alias-label-primary, #e8eaed)',
+      text2: 'var(--dsw-alias-label-secondary, #9aa0a6)',
+      idle: 'var(--dsw-alias-state-idle-primary, #5f6368)',
+      ok: 'var(--dsw-alias-state-success-primary, #34a853)',
+      warn: 'var(--dsw-alias-state-warn-primary, #f9ab00)',
+      err: 'var(--dsw-alias-state-error-primary, #ea4335)',
     }
 
-    const mono = 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace'
+    const MONO = 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace'
+    const SANS = 'system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif'
 
-    /* ------------------------------------------------------------- icon */
+    // 桌面式节奏：行高 26、栏高 34、字 12.5
+    const Z = {
+      rowH: 26,
+      barH: 34,
+      footH: 26,
+      fs: 12.5,
+      fsSm: 11.5,
+    }
+
+    /* ----------------------------------------------------------------- icon */
 
     function Icon(props) {
       const size = (props && props.size) || 20
       const active = Boolean(props && props.active)
-      const stroke = active ? C.accent : 'currentColor'
+      const tint = active ? T.brand : 'currentColor'
       return h(
         'svg',
         {
@@ -39,241 +65,352 @@ window.__ModuleLoader__.load({
           viewBox: '0 0 24 24',
           fill: 'none',
           'aria-hidden': true,
-          style: { display: 'block' },
+          style: { display: 'block', flex: '0 0 auto' },
         },
         h('rect', {
-          x: 2.5, y: 4.5, width: 19, height: 13, rx: 3.5,
-          stroke, strokeWidth: 1.6,
+          x: 2.5, y: 4.5, width: 19, height: 12.5, rx: 3,
+          stroke: tint, strokeWidth: 1.5,
         }),
         h('path', {
-          d: 'M10 8.6 L15 11 L10 13.4 Z',
-          fill: active ? C.accent : 'currentColor',
+          d: 'M9.8 8.4 L14.6 10.75 L9.8 13.1 Z',
+          fill: active ? T.brand : 'currentColor',
         }),
         h('path', {
-          d: 'M7 20.4 h10',
-          stroke, strokeWidth: 1.6, strokeLinecap: 'round',
+          d: 'M7.5 20.2 H16.5',
+          stroke: tint, strokeWidth: 1.5, strokeLinecap: 'round',
         }),
+        active
+          ? h('circle', { cx: 19.2, cy: 19.2, r: 2.6, fill: T.brand })
+          : null,
       )
     }
 
-    /* ------------------------------------------------------------ pieces */
+    /* --------------------------------------------------------------- pieces */
 
-    function Row(props) {
-      const cells = props.cells || []
+    /** 分区标题：小号、字距拉开，靠字重和留白分层，不靠色块。 */
+    function GroupTitle(props) {
+      return h(
+        'div',
+        {
+          style: {
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            height: Z.barH,
+            padding: '0 12px',
+            borderBottom: `1px solid ${T.line1}`,
+            background: T.layer1,
+          },
+        },
+        h(
+          'span',
+          {
+            style: {
+              fontFamily: SANS,
+              fontSize: Z.fsSm,
+              fontWeight: 600,
+              letterSpacing: '0.06em',
+              color: T.text2,
+              textTransform: 'uppercase',
+            },
+          },
+          props.title,
+        ),
+        props.right || null,
+      )
+    }
+
+    /** 右侧小徽标：弱提示用 idle 色，强的才用品牌/状态色（状态分级）。 */
+    function Badge(props) {
+      const tone = props.tone || T.idle
+      return h(
+        'span',
+        {
+          style: {
+            fontFamily: MONO,
+            fontSize: 10.5,
+            letterSpacing: '0.02em',
+            color: tone,
+            border: `1px solid ${tone}`,
+            borderRadius: 3,
+            padding: '1px 5px',
+            opacity: props.quiet ? 0.75 : 1,
+            whiteSpace: 'nowrap',
+          },
+        },
+        props.children,
+      )
+    }
+
+    /** 一行键值：左边中文标签，右边等宽值。中英混排做视觉补偿。 */
+    function KV(props) {
       return h(
         'div',
         {
           style: {
             display: 'grid',
-            gridTemplateColumns: props.cols || '110px 1fr',
-            gap: 12,
-            padding: '7px 10px',
-            borderTop: `1px solid ${C.line}`,
-            fontSize: 12.5,
-            lineHeight: 1.55,
+            gridTemplateColumns: props.cols || '96px 1fr',
+            alignItems: 'center',
+            minHeight: Z.rowH,
+            padding: '0 12px',
+            borderBottom: `1px solid ${T.line1}`,
           },
         },
-        cells.map((c, i) =>
-          h(
-            'div',
-            { key: i, style: { color: i === 0 ? C.dim : C.text, fontFamily: i === 0 ? 'inherit' : mono } },
-            c,
-          ),
-        ),
-      )
-    }
-
-    function Section(props) {
-      return h(
-        'div',
-        { style: { marginTop: 18 } },
         h(
-          'div',
-          {
-            style: {
-              fontSize: 11.5,
-              letterSpacing: '0.08em',
-              textTransform: 'uppercase',
-              color: C.faint,
-              marginBottom: 7,
-            },
-          },
-          props.title,
+          'span',
+          { style: { fontFamily: SANS, fontSize: Z.fs, color: T.text2 } },
+          props.k,
         ),
         h(
-          'div',
+          'span',
           {
             style: {
-              border: `1px solid ${C.line}`,
-              borderRadius: 8,
-              background: C.panel,
+              fontFamily: props.mono === false ? SANS : MONO,
+              fontSize: props.mono === false ? Z.fs : Z.fs - 0.5,
+              color: props.tone || T.text1,
+              fontVariantNumeric: 'tabular-nums',
               overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
             },
           },
-          props.children,
+          props.v,
         ),
       )
     }
 
-    /* ------------------------------------------------------------ panel */
+    /* ----------------------------------------------------------------- data */
 
     const MODES = [
-      ['default', '默认（什么都不做）', '插件不发起任何请求；调用会被明确拒绝并说明原因。'],
-      ['direct', '直连 B 站接口', '本机 IP 直接访问官方 API。最快，但本机 IP 也会被风控。'],
-      ['self', '走自建服务器', '直链与字幕走你自己的解析服务，把风控挪到服务器 IP 上。'],
-      ['proxy', '走第三方解析站', '站点池依次尝试。当前只作占位：这类站点只给视频文件，不给字幕。'],
-      ['auto', '全自动（依次尝试）', '探测自建服务器是否在线，不通就回落直连。推荐。'],
+      ['auto', '全自动', '探测自建服务，不通回落直连', true],
+      ['direct', '直连', '本机直接访问官方接口', false],
+      ['self', '自建服务', '直链与字幕走自己的服务器', false],
+      ['proxy', '第三方站', '站点池轮询（当前为占位）', false],
+      ['default', '默认', '不发起任何请求', false],
     ]
 
-    const EXAMPLES = [
-      '学习B站上前端的做法，帮我去做一个前端',
-      'B站上关于 React 状态管理的视频，总结成一篇笔记',
-      '把 B 站上播放量最高的几条 RAG 讲解看完，给我一份实现方案',
+    const TOOLS = [
+      ['bili_learn', '批量采集', '按播放量搜索 → 字幕/评论 → 落盘 markdown'],
+      ['bili_study', '一键研读', '采集后派子 agent 并行读，合并成简报'],
+      ['bili_watch', '单条深度', '给 BV 号直接抓，不用搜索'],
+      ['bili_config', '配置', '读写取数方式、并发、凭据'],
     ]
+
+    const CAPS = [
+      ['元数据', 'ok', '一次 100 条'],
+      ['评论', 'ok', '需凭据取全'],
+      ['字幕', 'warn', '约 11%'],
+      ['直链', 'ok', '无需登录'],
+      ['音频转写', 'ok', '慢，但一定有'],
+    ]
+
+    const CAP_TONE = { ok: T.ok, warn: T.warn, err: T.err }
+
+    /* ---------------------------------------------------------------- panel */
 
     function Panel() {
-      return h(
+      const shell = {
+        height: '100%',
+        background: T.base,
+        color: T.text1,
+        fontFamily: SANS,
+        fontSize: Z.fs,
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden',
+        boxSizing: 'border-box',
+      }
+
+      // 标题栏：牌子在左，关键状态在右，安静的事实不抢注意力
+      const titleBar = h(
         'div',
         {
           style: {
-            padding: '22px 26px 40px',
-            maxWidth: 920,
-            color: C.text,
-            fontSize: 13,
-            lineHeight: 1.65,
-            overflowY: 'auto',
-            height: '100%',
-            boxSizing: 'border-box',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            height: 42,
+            padding: '0 14px',
+            background: T.sidebar,
+            borderBottom: `1px solid ${T.line2}`,
+            flex: '0 0 auto',
           },
         },
-
-        h('div', { style: { fontSize: 17, fontWeight: 600, letterSpacing: '0.01em' } }, 'B站学习器'),
+        h('div', { style: { transform: 'scale(0.82)', transformOrigin: 'left center' } }, h(Icon, { size: 22, active: true })),
         h(
           'div',
-          { style: { color: C.dim, marginTop: 4, fontSize: 12.5 } },
-          '把 B 站当研究资料库：按播放量搜索 → 抓字幕与高赞评论 → 写成本地 markdown → 交给子 agent 学习 → 再动手施工。',
+          { style: { display: 'flex', flexDirection: 'column', gap: 1 } },
+          h('div', { style: { fontSize: 13, fontWeight: 600, letterSpacing: '0.01em' } }, 'B站学习器'),
+          h('div', { style: { fontSize: 10.5, color: T.text2 } }, '把视频变成可读正文'),
         ),
+        h('div', { style: { flex: 1 } }),
+        h(Badge, { tone: T.brand }, 'auto'),
+        h(Badge, { tone: T.idle, quiet: true }, '并发 4'),
+      )
 
+      // 主体：左栏配置，右栏工具，中间一条细分隔线（桌面式双栏）
+      const body = h(
+        'div',
+        {
+          style: {
+            display: 'grid',
+            gridTemplateColumns: '300px 1px 1fr',
+            flex: 1,
+            minHeight: 0,
+            overflow: 'hidden',
+          },
+        },
+        // 左：取数方式
         h(
-          Section,
-          { title: '取数方式' },
-          MODES.map(([id, name, note], i) =>
+          'div',
+          { style: { display: 'flex', flexDirection: 'column', minWidth: 0, overflow: 'auto' } },
+          h(GroupTitle, { title: '取数方式' }),
+          MODES.map(([id, name, desc, on], i) =>
             h(
               'div',
               {
                 key: id,
                 style: {
                   display: 'grid',
-                  gridTemplateColumns: '150px 1fr',
-                  gap: 12,
-                  padding: '8px 10px',
-                  borderTop: i === 0 ? 'none' : `1px solid ${C.line}`,
-                  fontSize: 12.5,
+                  gridTemplateColumns: '3px 1fr',
+                  minHeight: Z.rowH + 10,
+                  borderBottom: `1px solid ${T.line1}`,
+                  background: on ? T.layer1 : 'transparent',
+                },
+              },
+              // 选中用左侧竖条，不用胶囊；未选中留空位，保证文字左缘对齐
+              h('div', { style: { background: on ? T.brand : 'transparent' } }),
+              h(
+                'div',
+                { style: { padding: '5px 11px', display: 'flex', flexDirection: 'column', gap: 1, minWidth: 0 } },
+                h(
+                  'div',
+                  { style: { display: 'flex', alignItems: 'baseline', gap: 6 } },
+                  h('span', { style: { fontSize: Z.fs, color: on ? T.text1 : T.text2, fontWeight: on ? 600 : 400 } }, name),
+                  h('span', { style: { fontFamily: MONO, fontSize: 10, color: on ? T.brand : T.idle } }, id),
+                ),
+                h('div', {
+                  style: { fontSize: 11, color: T.idle, lineHeight: 1.45, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+                }, desc),
+              ),
+            ),
+          ),
+        ),
+        h('div', { style: { background: T.line1 } }),
+        // 右：工具与能力
+        h(
+          'div',
+          { style: { display: 'flex', flexDirection: 'column', minWidth: 0, overflow: 'auto' } },
+          h(GroupTitle, { title: '工具' }),
+          TOOLS.map(([name, label, desc], i) =>
+            h(
+              'div',
+              {
+                key: name,
+                style: {
+                  display: 'grid',
+                  gridTemplateColumns: '132px 1fr',
+                  alignItems: 'center',
+                  minHeight: Z.rowH + 4,
+                  padding: '2px 12px',
+                  borderBottom: `1px solid ${T.line1}`,
                 },
               },
               h(
                 'div',
-                { style: { color: C.text } },
-                h('span', { style: { fontFamily: mono, color: C.accent, marginRight: 8 } }, id),
-                name,
+                { style: { display: 'flex', alignItems: 'baseline', gap: 6 } },
+                h('span', { style: { fontFamily: MONO, fontSize: 11.5, color: T.brand } }, name.replace('bili_', '')),
+                h('span', { style: { fontSize: 10.5, color: T.idle } }, label),
               ),
-              h('div', { style: { color: C.dim } }, note),
+              h(
+                'div',
+                { style: { fontSize: 11.5, color: T.text2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } },
+                desc,
+              ),
             ),
           ),
-        ),
-
-        h(
-          Section,
-          { title: '怎么改' },
+          h(GroupTitle, { title: '数据能力', right: h(Badge, { tone: T.warn, quiet: true }, '字幕需凭据') }),
           h(
             'div',
-            { style: { padding: '10px 12px', fontSize: 12.5, color: C.dim } },
-            '在对话里说一句就行，例如：',
-            h(
-              'div',
-              {
-                style: {
-                  margin: '8px 0',
-                  padding: '8px 10px',
-                  borderRadius: 6,
-                  background: 'rgba(94,196,138,0.08)',
-                  border: `1px solid rgba(94,196,138,0.22)`,
-                  fontFamily: mono,
-                  color: C.text,
+            { style: { display: 'flex', flexDirection: 'column' } },
+            CAPS.map(([name, tone, note], i) =>
+              h(
+                'div',
+                {
+                  key: name,
+                  style: {
+                    display: 'grid',
+                    gridTemplateColumns: '14px 76px 1fr',
+                    alignItems: 'center',
+                    minHeight: Z.rowH - 2,
+                    padding: '0 12px',
+                    borderBottom: i === CAPS.length - 1 ? 'none' : `1px solid ${T.line1}`,
+                  },
                 },
-              },
-              '把 B站学习器设成 auto 模式，并行度 6',
-            ),
-            'DSH 会调用 bili_config 写入 ',
-            h('span', { style: { fontFamily: mono } }, '~/.dsh-bili-learn/settings.json'),
-            '。面板本身只做展示，避免浏览器侧直接改动文件。',
-          ),
-        ),
-
-        h(
-          Section,
-          { title: '字幕的前提' },
-          h(
-            'div',
-            { style: { padding: '10px 12px', fontSize: 12.5, color: C.dim } },
-            h('span', { style: { color: C.warn, fontWeight: 600 } }, '需要 SESSDATA。'),
-            ' 实测：无登录态时 B 站对字幕接口返回 code=0 但字幕列表为空，' +
-              '签名版本也一样。没有凭证时插件仍能拿到标题、简介和评论，但正文要另想办法（音频转写）。',
-          ),
-        ),
-
-        h(
-          Section,
-          { title: '典型用法' },
-          EXAMPLES.map((e, i) =>
-            h(
-              'div',
-              {
-                key: i,
-                style: {
-                  padding: '8px 10px',
-                  borderTop: i === 0 ? 'none' : `1px solid ${C.line}`,
-                  fontFamily: mono,
-                  fontSize: 12.5,
-                  color: C.text,
-                },
-              },
-              e,
+                // 状态点有强弱：正常是小实心，警告带一圈，避免所有点长得一样
+                h('div', {
+                  style: {
+                    width: tone === 'ok' ? 6 : 7,
+                    height: tone === 'ok' ? 6 : 7,
+                    borderRadius: '50%',
+                    background: tone === 'ok' ? CAP_TONE.ok : 'transparent',
+                    border: tone === 'ok' ? 'none' : `1.5px solid ${CAP_TONE[tone]}`,
+                    boxSizing: 'border-box',
+                  },
+                }),
+                h('span', { style: { fontSize: Z.fs, color: T.text1 } }, name),
+                h('span', { style: { fontFamily: MONO, fontSize: Z.fs - 0.5, color: T.text2 } }, note),
+              ),
             ),
           ),
-        ),
-
-        h(
-          Section,
-          { title: '一键研读（bili_study）' },
-          h(
-            'div',
-            { style: { padding: '10px 12px', fontSize: 12.5, color: C.dim } },
-            h('div', { style: { fontFamily: mono, color: C.text, marginBottom: 6 } }, 'bili_study'),
-            '采集完成后立刻按并发派子 agent，一个视频一个，各自提炼再合并成一份 brief。',
-            h('div', { style: { marginTop: 6 } }, '派发不可用时不会失败：降级返回文件清单和明确指令，任何情况下都不空手。'),
-          ),
-        ),
-
-        h(
-          Section,
-          { title: '采集落到哪里' },
-          h(
-            'div',
-            { style: { padding: '10px 12px', fontSize: 12.5, color: C.dim } },
-            h('div', { style: { fontFamily: mono, color: C.text, marginBottom: 6 } }, '~/.dsh-bili-learn/harvests/<时间>-<主题>/'),
-            h(Row, { cells: ['index.json', '本次采集的视频索引：标题 / 播放量 / 字幕行数 / 评论数'] }),
-            h(Row, { cells: ['<BV号>.md', '单条视频的可读正文：简介 + 带时间轴字幕 + 高赞评论'] }),
-          ),
-        ),
-
-        h(
-          'div',
-          { style: { marginTop: 20, color: C.faint, fontSize: 11.5 } },
-          '并行度 concurrency 控制的是同时派发多少个子 agent 去读这些文件；取数本身始终串行限速，' +
-            '因为风控的计数单位是 IP 请求数，不是 agent 数量。',
         ),
       )
+
+      // 状态栏：只放最有判断价值的三件事，等宽对齐
+      const foot = h(
+        'div',
+        {
+          style: {
+            display: 'flex',
+            alignItems: 'center',
+            gap: 14,
+            height: Z.footH,
+            padding: '0 12px',
+            background: T.sidebar,
+            borderTop: `1px solid ${T.line2}`,
+            fontFamily: MONO,
+            fontSize: 10.5,
+            color: T.text2,
+            flex: '0 0 auto',
+          },
+        },
+        h('span', { style: { color: T.ok } }, '● 就绪'),
+        h('span', null, 'gap 1200ms'),
+        h('span', null, 'harvests ~/.dsh-bili-learn'),
+        h('div', { style: { flex: 1 } }),
+        h('span', { style: { color: T.idle } }, 'bili-learn 0.1.0'),
+      )
+
+      // 说明区：只在宽屏出现，窄屏不挤——用说明承载「怎么改」，不占操作位
+      const note = h(
+        'div',
+        {
+          style: {
+            padding: '9px 14px',
+            borderTop: `1px solid ${T.line1}`,
+            background: T.layer1,
+            fontSize: 11,
+            lineHeight: 1.6,
+            color: T.idle,
+            flex: '0 0 auto',
+          },
+        },
+        '在对话里说一句就能改配置，例如 ',
+        h('span', { style: { fontFamily: MONO, color: T.text2 } }, '把 B站学习器设成 auto 模式，并发 6'),
+        '。面板只读，避免浏览器侧改写配置文件。',
+      )
+
+      return h('div', { style: shell }, titleBar, body, note, foot)
     }
 
     /* ------------------------------------------------------------- apply */
