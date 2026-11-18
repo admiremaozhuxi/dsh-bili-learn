@@ -18,7 +18,7 @@
       "source": {
         "type": "git",
         "url": "https://github.com/admiremaozhuxi/dsh-bili-learn",
-        "commit": "0750d5a4cd528f44e9684b3d32461ff6153c9eb0",
+        "commit": "fbfe26dd593a1b650d7c02df6710d2ef9e14c604",
         "path": "plugin"
       }
     }
