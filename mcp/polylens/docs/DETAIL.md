@@ -1,17 +1,18 @@
 # B站第二数据源（polylens）
 
-把 [polylens-bilibili-mcp](https://pypi.org/project/polylens-bilibili-mcp/) 接进 DSH，作为自建采集器之外的**第二数据源**。
+把 [polylens-bilibili-mcp](https://pypi.org/project/polylens-bilibili-mcp/) 接进 DSH，作为主插件之外的**第二数据源**。
 
-## 为什么需要它
+> **现状（2026-11 实测，版本 0.13.0）**：取数工具跑不起来。`get_video_info` 在数据已经取到的情况下卡在 jq 环节，连 `jq="."`（恒等表达式、不做任何处理）都触发「jq 执行超过 2 秒，已终止」；`get_subtitles` 直接请求超时。只有 `get_version` 和 `get_login_status` 能正常响应。
+>
+> **它的两项独有能力已经吸收进主插件**：评论翻页（`commentPages`）和二级评论（`replyLimit`）。所以这个 bundle 现在**不是必需的**。留着是因为它的设计值得参照，将来上游修好之后接回来也很便宜。
 
-自建采集器（`@local/dsh-bili-learn`）是主力，快、可控、结果落成本地文件。但它有两个已知缺口：
+## 它设计上值得学的三点
 
-| 缺口 | 说明 |
+| 设计 | 好在哪 |
 |---|---|
-| 评论截断 | 无登录态时 B 站只返回 3 条预览评论 |
-| 无分页 | 单次只取一页评论 |
-
-polylens 补的正是这些：评论支持**游标续取**、可按热度或时间排序、还有二级评论、分 P 清单、UP 主资料、弹幕数。
+| jq 前置裁剪 | 在返回前就裁掉字段，省 context——思路对，只是实现卡在自己的超时上 |
+| 评论游标续取 | 能一直翻页，不占 session（已吸收进 `bili_watch`） |
+| 限速与缓存 | 每分钟 30 页、被拦停用 15 分钟、结果按整次调用缓存 |
 
 ## 接法
 
@@ -24,19 +25,23 @@ command: uvx
 args: [polylens-bilibili-mcp]
 ```
 
-工具在 DSH 里以 `mcp__bilibili__<tool>` 出现，例如 `mcp__bilibili__get_subtitles`。
+工具在 DSH 里以 `mcp__bilibili__<tool>` 出现。
 
-## 必须先登录
+## 登录
 
-除登录相关工具外，全部工具都要求登录态，且每次调用前会联网核验。方法：让 DSH 调用 `mcp__bilibili__start_qr_login` 取二维码，用 B 站 App 扫码，再调用 `complete_qr_login`。
+除登录相关工具外，全部工具都要求登录态。方法：调 `mcp__bilibili__start_qr_login` 取二维码，用 B 站 App 扫码，再调 `complete_qr_login`。凭据存在 `~/.cache/polylens-bilibili/cookie`。
 
-凭据保存在 `~/.cache/polylens-bilibili/cookie`。
+**注意**：主插件的扫码登录是独立的，两者不共享凭据。主插件把 cookie 存在 `~/.dsh-bili-learn/settings.json`，所以只用主插件就够。
 
-## 它自带的限速
+## 想用它就先做这两个测试
 
-评论每分钟最多 30 页；被平台拦截后评论工具停用约 15 分钟，其他工具不受影响；结果按整次调用缓存。
+```
+mcp__bilibili__get_version       → 应返回版本号
+mcp__bilibili__get_video_info    → 传 jq="." 和任意 BV，看是否超时
+```
 
-## 注意
+第二个超时就是上面说的问题，不是配置错误。可以到上游提 issue，说明「数据已取到、卡在 jq 环节、恒等表达式也超时，建议调高超时或分批处理」。
 
-- 首次启动 `uvx` 需要下载 Python 3.13 运行时与依赖，会慢一些，之后有缓存。
-- 它要求 Python ≥ 3.13，本机系统的 3.12 不够，由 `uvx` 自己管理，不要改用系统 Python。
+## 依赖
+
+要求 Python ≥ 3.13，由 `uvx` 自动管理，不要改用系统 Python。首次启动要下运行时，会慢一些。

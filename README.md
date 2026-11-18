@@ -81,7 +81,8 @@ git clone https://github.com/admiremaozhuxi/dsh-bili-learn.git
 | **`view` 接口无 cookie 会 -412** | 返回 HTTP 412 / `{"code":-412}`。所以本项目**全程不用 `view`**：`search/type` 自带 `aid`，`player/pagelist` 自带 `cid` |
 | **字幕必须登录** | `player/v2` 无 cookie 实测 **0/16**；签名版 `player/wbi/v2` 也是 **0/3**，且 `allow_submit=false`。不是接口选错，不是签名算错 |
 | **字幕覆盖率约 11%** | 4 个分区 9 条视频，只有 1 条带字幕轨（`ai-zh`+`ai-en`，拉到 792 行）。知识类高，游戏舞蹈基本没有 |
-| **评论无 cookie 会截断** | 请求 `ps=20`，实际只回 3 条预览 |
+| **评论无 cookie 会截断** | 未登录时请求 `ps=20`，实际只回 **3 条**预览。**登录后每页 20 条**，可翻页（`pn`），可取二级评论（`/x/v2/reply/reply`）。实测翻两页拿到 40 条，二级评论 6 条 |
+| **`wbi/view` 登录后可用** | 无 cookie 时 `view` 返回 412，一度以为它永久不可用。实测**登录后 `wbi/view` 正常返回**，能拿 `aid`（评论接口必需，`pagelist` 不给） |
 | **直链不需要 cookie** | `/x/player/wbi/playurl` 返回 `code=0, dash=true`。实测下载 3 MB/s |
 | **一次请求带 3 个候选地址** | 主地址 + 2 个备用 CDN，天然冗余，不需要第三方 |
 | **风控计数单位是 IP** | 同一 IP 连续约 30 次请求开始 412。「开 8 个 agent 并行」= 8 倍速送进冷却 |

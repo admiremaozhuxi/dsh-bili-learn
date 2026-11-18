@@ -262,17 +262,57 @@ async function getSubtitles(bvid, cid, opts) {
   return { lines: out, trace: out.length ? 'ok' : 'empty_body' }
 }
 
-async function getComments(aid, opts, limit = 20) {
-  if (!aid) return { items: [], trace: 'no_aid' }
-  const url = `${API}/x/v2/reply?type=1&oid=${aid}&ps=${Math.min(limit, 49)}&sort=2`
+/**
+ * 评论。登录后每页 20 条，可以翻页。
+ *
+ * 这两条能力是从 polylens 那边学来的：它会游标续取、能取二级评论，
+ * 我原来只取第一页。现在按页取，页与页之间仍走 gapMs，避免一次打太多。
+ */
+async function getComments(aid, opts, { limit = 20, maxPages = 1 } = {}) {
+  if (!aid) return { items: [], trace: 'no_aid', pages: 0 }
+  const per = Math.min(Math.max(limit, 1), 49)
+  const out = []
+  let pages = 0
+  for (let pn = 1; pn <= Math.max(1, maxPages); pn += 1) {
+    const url = `${API}/x/v2/reply?type=1&oid=${aid}&ps=${per}&pn=${pn}&sort=2`
+    const d = await getJson(url, opts)
+    if (d.code !== 0) {
+      if (!out.length) return { items: [], trace: `api_code_${d.code}`, pages }
+      break
+    }
+    const reps = d?.data?.replies || []
+    if (!reps.length) break
+    pages += 1
+    for (const r of reps) {
+      out.push({
+        rpid: r.rpid,
+        like: r.like,
+        user: r?.member?.uname,
+        ctime: r.ctime,
+        text: String(r?.content?.message || '').slice(0, 400),
+        replyCount: Number(r.rcount) || 0,
+      })
+      if (out.length >= limit) break
+    }
+    if (out.length >= limit) break
+  }
+  return { items: out.slice(0, limit), trace: out.length ? 'ok' : 'empty', pages }
+}
+
+/** 某条主评论下的二级评论 —— polylens 有、我原来没有的能力。 */
+async function getCommentReplies(aid, root, opts, { limit = 8 } = {}) {
+  if (!aid || !root) return { items: [], trace: 'bad_args' }
+  const url =
+    `${API}/x/v2/reply/reply?type=1&oid=${aid}&root=${root}` +
+    `&ps=${Math.min(Math.max(limit, 1), 49)}&pn=1`
   const d = await getJson(url, opts)
   if (d.code !== 0) return { items: [], trace: `api_code_${d.code}` }
-  const reps = d?.data?.replies || []
+  const reps = (d?.data?.replies) || []
   return {
     items: reps.slice(0, limit).map((r) => ({
       like: r.like,
       user: r?.member?.uname,
-      text: String(r?.content?.message || '').slice(0, 400),
+      text: String(r?.content?.message || '').slice(0, 300),
     })),
     trace: reps.length ? 'ok' : 'empty',
   }
@@ -318,7 +358,12 @@ function toMarkdown(v) {
   }
   out.push('', `## 高赞评论（${v.commentTrace}）`)
   if (v.comments.length) {
-    for (const c of v.comments) out.push(`- (${c.like} 赞) ${c.user}: ${c.text}`)
+    for (const c of v.comments) {
+      out.push(`- (${c.like} 赞) ${c.user}: ${c.text}`)
+      for (const r of c.replies || []) {
+        out.push(`    └ (${r.like} 赞) ${r.user}: ${r.text}`)
+      }
+    }
   } else {
     out.push('_无评论_')
   }
@@ -388,7 +433,7 @@ async function harvest(args, settings) {
     let comments = { items: [], trace: 'skipped' }
     if (page?.cid) {
       subs = await getSubtitles(v.bvid, page.cid, opts)
-      if (withComments) comments = await getComments(v.aid, opts, 20)
+      if (withComments) comments = await getComments(v.aid, opts, { limit: 20, maxPages: 1 })
     }
     const record = {
       ...v,
@@ -731,6 +776,18 @@ function registerTools(ctx) {
               'comments without the view endpoint, which is risk-blocked.',
           },
           withComments: { type: 'boolean', description: 'Include top comments. Default true.' },
+          commentLimit: {
+            type: 'integer',
+            description: '最多取多少条主评论。默认 20，上限 100。需要登录才能超过 3 条。',
+          },
+          commentPages: {
+            type: 'integer',
+            description: '翻几页评论（每页约 20 条）。默认 1，上限 5。页与页之间会自动限速。',
+          },
+          replyLimit: {
+            type: 'integer',
+            description: '给前几条「有回复的」主评论再取二级评论。默认 3，传 0 表示不取。',
+          },
         },
         required: ['bvid'],
       },
@@ -772,10 +829,28 @@ function registerTools(ctx) {
         const aid = meta?.aid || args.aid
         const comments =
           args.withComments === false
-            ? { items: [], trace: 'skipped' }
+            ? { items: [], trace: 'skipped', pages: 0 }
             : aid
-              ? await getComments(aid, opts)
-              : { items: [], trace: 'no_aid（登录后可得）' }
+              ? await getComments(aid, opts, {
+                  limit: Math.min(Math.max(Number(args.commentLimit) || 20, 1), 100),
+                  maxPages: Math.min(Math.max(Number(args.commentPages) || 1, 1), 5),
+                })
+              : { items: [], trace: 'no_aid（登录后可得）', pages: 0 }
+
+        // 二级评论：只对前几条有回复的主评论取，避免请求爆炸
+        if (aid && comments.items.length && Number(args.replyLimit) !== 0) {
+          const want = Math.min(Math.max(Number(args.replyLimit) || 3, 0), 8)
+          let fetched = 0
+          for (const c of comments.items) {
+            if (fetched >= want) break
+            if (!c.replyCount) continue
+            const r = await getCommentReplies(aid, c.rpid, opts, { limit: 6 })
+            if (r.items.length) {
+              c.replies = r.items
+              fetched += 1
+            }
+          }
+        }
         await mkdir(HARVEST_ROOT, { recursive: true })
         const file = path.join(HARVEST_ROOT, `${bvid}.md`)
         await writeFile(
