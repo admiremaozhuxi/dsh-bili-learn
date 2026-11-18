@@ -835,20 +835,23 @@ function registerTools(ctx) {
                   signal: exec.signal,
                   agent: exec.agent,
                 })
-                const first = batch?.results?.[0]
-                // DSH 的 subagent 是「启动即返回、结果异步送达」，所以拿到的
-                // 往往是 activation 而不是正文。识别出来单独记录，别把这段
-                // JSON 当成阅读结果拼进简报里。
+                // ctx.tools.execute 的每一项是 { callId, result }，真正的工具
+                // 返回值在 result 里。不解包的话下面所有判断都作用在外层对象上，
+                // 最终落到 JSON.stringify，把整个响应当成正文塞进简报。
+                const raw = batch?.results?.[0]
+                const payload = raw?.result !== undefined ? raw.result : raw
+                // DSH 的 subagent 是「启动即返回、结果异步送达」，拿到的往往是
+                // activation 而不是正文，识别出来单独计数。
                 const isActivation =
-                  first?.value?.kind === 'activation' ||
-                  first?.meta?.kind === 'activation' ||
-                  /^started subagent/.test(String(first?.value?.name || ''))
+                  payload?.value?.kind === 'activation' ||
+                  payload?.meta?.kind === 'activation' ||
+                  /^started subagent/.test(String(payload?.value?.name || ''))
                 if (isActivation) {
                   activationRuns.push(t.v.bvid)
                   continue
                 }
-                const text = resultText(first)
-                if (first?.isError || !text.trim()) {
+                const text = resultText(payload)
+                if (payload?.isError || !text.trim()) {
                   degraded = true
                   degradeReason = '有子 agent 返回空结果或被拒绝。'
                   continue
