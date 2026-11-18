@@ -11,20 +11,19 @@ import { getJson } from './net.js'
 
 const PASSPORT = 'https://passport.bilibili.com/x/passport-login/web'
 
-/** 返回 { key, url, svg }。svg 可直接嵌进面板。 */
+/** 返回 { key, url, img }。img 是 PNG data URL，比内联 SVG 在各种渲染环境下都稳。 */
 export async function startQrLogin() {
   const d = await getJson(`${PASSPORT}/qrcode/generate`, { timeout: 15000 })
   if (d.code !== 0 || !d?.data?.url) {
     throw new Error(`生成二维码失败：${d.message || d.code || '未知'}（可能被风控）`)
   }
-  const svg = await QRCode.toString(d.data.url, {
-    type: 'svg',
+  const img = await QRCode.toDataURL(d.data.url, {
     margin: 1,
     width: 220,
     errorCorrectionLevel: 'M',
-    color: { dark: '#000000', light: '#ffffff' },
+    color: { dark: '#000000ff', light: '#ffffffff' },
   })
-  return { key: d.data.qrcode_key, url: d.data.url, svg }
+  return { key: d.data.qrcode_key, url: d.data.url, img }
 }
 
 /**

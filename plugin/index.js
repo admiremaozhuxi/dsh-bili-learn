@@ -13,17 +13,14 @@
  *    throttled and retried with backoff.
  */
 import { createHash } from 'node:crypto'
-import { execFile } from 'node:child_process'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import path from 'node:path'
-import { promisify } from 'node:util'
 
+import { transcribeAudio } from './lib/asr.js'
 import { ensureFfmpeg } from './lib/ffmpeg.js'
 import { pollQrLogin, startQrLogin } from './lib/login.js'
 import { readFrames } from './lib/media.js'
-
-const run = promisify(execFile)
 
 const API = 'https://api.bilibili.com'
 const UA =
@@ -53,9 +50,6 @@ const DEFAULT_SETTINGS = {
   cookie: '',
   proxies: [],
   gapMs: 1200,
-  // 画面路径：python 解释器与抽帧脚本的位置，留空则用默认推断
-  pythonPath: '',
-  framesScript: '',
 }
 
 /* ------------------------------------------------------------------ settings */
@@ -856,6 +850,76 @@ function registerTools(ctx) {
     }),
   )
 
+  /* ---------------------------------------------------------- transcribe */
+  ctx.effect(() =>
+    ctx.tools.register({
+      name: 'bili_transcribe',
+      description:
+        'Turn the spoken audio of a video into text, without a login. Use it when the subtitle is missing — ' +
+        'only about one video in nine has one — and you need what was actually said. Downloads the audio ' +
+        'track and sends it to a speech-to-text endpoint. Costs roughly the audio duration in wall time, ' +
+        'so it suits a few key videos rather than a bulk harvest.',
+      parameters: {
+        type: 'object',
+        properties: {
+          bvid: { type: 'string', description: 'BV id, e.g. BV1fAZtYoEnW.' },
+        },
+        required: ['bvid'],
+      },
+      output: {
+        schema: {
+          type: 'object',
+          properties: {
+            ok: { type: 'boolean' },
+            bvid: { type: 'string' },
+            chars: { type: 'integer' },
+            seconds: { type: 'integer' },
+            text: { type: 'string' },
+            file: { type: 'string' },
+            log: { type: 'string' },
+            note: { type: 'string' },
+          },
+        },
+        render(args, value) {
+          if (!value?.ok) return textBlock(`转写失败：${value?.note || '未知原因'}`)
+          return textBlock(
+            `${value.bvid}：${value.chars} 字 / ${value.seconds}s\n已写入 ${value.file}\n\n${String(value.text || '').slice(0, 1200)}`,
+          )
+        },
+      },
+      async execute(args) {
+        const s = await loadSettings()
+        const bvid = String(args.bvid || '').trim()
+        if (!/^BV[0-9A-Za-z]+$/.test(bvid)) {
+          return { ok: false, bvid, note: 'invalid bvid', chars: 0, text: '' }
+        }
+        const meta = await getCid(bvid, { cookie: s.cookie || '', gapMs: 400 })
+        if (!meta?.cid) return { ok: false, bvid, note: '取不到 cid', chars: 0, text: '' }
+
+        const r = await transcribeAudio(bvid, meta.cid, s)
+        if (!r.ok) return { ok: false, bvid, chars: 0, text: '', log: r.log, note: r.note }
+
+        const dir = path.join(HARVEST_ROOT, `${bvid}-转写`)
+        await mkdir(dir, { recursive: true })
+        const file = path.join(dir, `${bvid}.md`)
+        await writeFile(
+          file,
+          `# ${bvid}（音频转写）\n\n- 链接: https://www.bilibili.com/video/${bvid}\n- 来源: 音频转写\n\n${r.text}\n`,
+          'utf8',
+        )
+        return {
+          ok: true,
+          bvid,
+          chars: r.text.length,
+          seconds: r.seconds,
+          text: r.text,
+          file,
+          log: r.log,
+        }
+      },
+    }),
+  )
+
   /* -------------------------------------------------------------- sources */
   ctx.effect(() =>
     ctx.tools.register({
@@ -1313,7 +1377,7 @@ function registerHttpApi(ctx) {
         resource: async () => {
           try {
             const qr = await startQrLogin()
-            return Response.json({ ok: true, key: qr.key, svg: qr.svg })
+            return Response.json({ ok: true, key: qr.key, img: qr.img })
           } catch (err) {
             return Response.json({ ok: false, error: String(err).slice(0, 200) })
           }

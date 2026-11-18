@@ -22,7 +22,7 @@ agent 会调用 `bili_learn` 或 `bili_study`，按播放量抓一批高相关�
 
 | 目录 | 是什么 | 依赖 |
 |---|---|---|
-| `plugin/` | DSH 插件：`bili_learn` / `bili_study` / `bili_watch` / `bili_config` 四个工具 + 左侧栏面板 | DSH |
+| `plugin/` | DSH 插件：7 个工具 + 左侧栏面板，**零额外依赖**（Node + 自动下载的 ffmpeg） | DSH |
 | `tools/` | 独立的 Python 采集器 `harvest.py` 与自建解析服务 `parse_svc.py` | Python 3.10+ |
 | `mcp/polylens/` | 配置式 bundle，把 [polylens-bilibili-mcp](https://pypi.org/project/polylens-bilibili-mcp/) 接成第二数据源 | `uv` / `uvx` |
 

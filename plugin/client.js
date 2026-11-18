@@ -118,9 +118,9 @@ window.__ModuleLoader__.load({
     const MODES = [
       ['auto', '全自动（推荐）', '先试自己的服务器；连不上就同时试两条直连，谁先成功用谁'],
       ['direct', '直接连 B 站', '两条直连同时跑，拿得快，但连着请求太多会被短暂拦住'],
-      ['self', '只走自己的服务器', '请求全放在服务器上，本机不出网，最不容易被拦'],
+      ['self', '只走自己的服务器', '取视频文件的请求全放在服务器上，本机不出网'],
       ['proxy', '第三方网站', '这些网站要人工点验证码，只有打不开时才当备选'],
-      ['default', '什么都不做', '插件完全不联网'],
+      ['default', '不取视频文件', '搜索、字幕、评论照常；只是不下载视频、不看画面'],
     ]
 
     const TOOLS = [
@@ -128,6 +128,8 @@ window.__ModuleLoader__.load({
       ['bili_study', '一键自学', '抓完之后自动派几个 AI 分身分别读，再合成一份笔记'],
       ['bili_watch', '看单个视频', '给它一个 BV 号，直接抓字幕和评论'],
       ['bili_frames', '看画面', '抽几帧图让 AI 看，能读懂 PPT、代码和操作'],
+      ['bili_transcribe', '声音转文字', '视频没字幕时用，把口播转成文字，不用登录'],
+      ['bili_sources', '查来源', '现在哪些来源能用、多快，决定怎么采'],
       ['bili_config', '用对话改设置', '懒得点面板就在对话里说一句'],
     ]
 
@@ -174,55 +176,76 @@ window.__ModuleLoader__.load({
       const [copied, setCopied] = useState('')
       const [sources, setSources] = useState(null)
       const [probing, setProbing] = useState(false)
-      const [qr, setQr] = useState(null)
+      const [qr, setQr] = useState(null) // { key, img }
+      const [qrPhase, setQrPhase] = useState('idle') // idle|waiting|scanned|success|expired|error
       const [qrMsg, setQrMsg] = useState('')
-      const [qrBusy, setQrBusy] = useState(false)
+      const [login, setLogin] = useState(null) // { ok, name }
+
+      const refreshLogin = async () => {
+        try {
+          const d = await apiGet('/bili-learn/test')
+          if (d && d.ok && d.login) setLogin(d.login)
+        } catch (err) {
+          /* 查不到就保持未知 */
+        }
+      }
 
       const beginQr = async () => {
-        if (qrBusy) return
-        setQrBusy(true)
-        setQrMsg('')
+        if (qrPhase === 'waiting' || qrPhase === 'scanned') return
+        setQrPhase('waiting')
+        setQrMsg('正在生成二维码…')
+        setQr(null)
         try {
           const d = await apiGet('/bili-learn/qr')
           if (!d.ok) {
+            setQrPhase('error')
             setQrMsg(d.error || '生成二维码失败')
-            setQrBusy(false)
             return
           }
-          setQr({ key: d.key, svg: d.svg })
-          setQrMsg('用 B 站 App 扫上面这张码，扫完在手机上点确认')
+          setQr({ key: d.key, img: d.img })
+          setQrMsg('用 B 站 App 扫上面这张码')
           const key = d.key
           let tries = 0
           const tick = async () => {
             tries += 1
             if (tries > 90) {
-              setQrBusy(false)
-              setQrMsg('等太久了，重新点一次')
+              setQrPhase('expired')
+              setQrMsg('等了太久，二维码可能已失效，点「换一张」重来')
               return
             }
             try {
               const p = await apiGet('/bili-learn/qr/poll?key=' + encodeURIComponent(key))
               if (p.state === 'success') {
                 setQr(null)
-                setQrMsg('登录成功 ✓')
-                setQrBusy(false)
+                setQrPhase('success')
+                setQrMsg('登录成功 ✓ 不用再扫了')
+                setLogin({ ok: true, name: '' })
+                refreshLogin()
                 return
               }
-              if (p.state === 'expired' || p.state === 'error') {
-                setQrBusy(false)
-                setQrMsg(p.message || '二维码失效了，重新点一次')
+              if (p.state === 'scanned') {
+                setQrPhase('scanned')
+                setQrMsg('已扫码，请在手机上点「确认登录」')
+              } else if (p.state === 'expired') {
+                setQrPhase('expired')
+                setQrMsg('二维码过期了，点「换一张」重来')
                 return
+              } else if (p.state === 'error') {
+                setQrPhase('error')
+                setQrMsg(p.message || '出错了')
+                return
+              } else {
+                setQrMsg('用 B 站 App 扫上面这张码')
               }
-              if (p.message) setQrMsg(p.message)
             } catch (err) {
-              /* 单次失败不算结束，继续试 */
+              /* 单次失败继续试 */
             }
             setTimeout(tick, 2000)
           }
           setTimeout(tick, 1500)
         } catch (err) {
+          setQrPhase('error')
           setQrMsg(String(err.message || err))
-          setQrBusy(false)
         }
       }
 
@@ -276,12 +299,13 @@ window.__ModuleLoader__.load({
             setLoadError(String(err.message || err))
             setLoaded(true)
           })
-        // 源状态用缓存，不阻塞首屏
+        // 源状态与登录态用缓存/轻查询，不阻塞首屏
         apiGet('/bili-learn/sources')
           .then((d) => {
             if (alive && d && d.ok) setSources(d)
           })
           .catch(() => {})
+        refreshLogin()
         return () => {
           alive = false
         }
@@ -328,30 +352,61 @@ window.__ModuleLoader__.load({
               padding: '12px 14px', marginBottom: 20,
             },
           },
+          // 当前状态一行，扫完转眼就能看到
+          h(
+            'div',
+            { style: { display: 'grid', gridTemplateColumns: '8px 1fr', gap: 9, alignItems: 'center', marginBottom: qr ? 12 : 10 } },
+            h('span', {
+              style: {
+                width: 7, height: 7, borderRadius: '50%',
+                background: login && login.ok ? V.ok : V.line,
+              },
+            }),
+            h('span', { style: { fontSize: 12.5, color: V.text } },
+              login === null
+                ? '登录状态查询中…'
+                : login.ok
+                  ? ('已登录' + (login.name ? '（' + login.name + '）' : '') + '，字幕和完整评论可用')
+                  : '未登录，字幕拿不到（其他功能不受影响）'),
+          ),
           qr
             ? h(
                 'div',
                 { style: { display: 'flex', gap: 16, alignItems: 'flex-start' } },
                 h('div', {
-                  style: { background: '#fff', padding: 6, borderRadius: 6, lineHeight: 0 },
-                  dangerouslySetInnerHTML: { __html: qr.svg },
-                }),
-                h('div', { style: { flex: 1, minWidth: 0 } },
-                  h('div', { style: { fontSize: 13, color: V.text, marginBottom: 4 } }, '扫码登录'),
-                  h('div', { style: { fontSize: 12, color: V.sub, lineHeight: 1.7 } }, qrMsg || '等待扫码…'),
-                  h('div', { style: { marginTop: 8 } },
-                    h(Button, { onClick: beginQr, disabled: qrBusy }, '换一张')),
+                  style: { background: '#fff', padding: 6, borderRadius: 6, lineHeight: 0, flex: '0 0 auto' },
+                }, h('img', { src: qr.img, width: 200, height: 200, alt: 'B站登录二维码' })),
+                h(
+                  'div',
+                  { style: { flex: 1, minWidth: 0 } },
+                  h('div', {
+                    style: {
+                      fontSize: 12.5, lineHeight: 1.75,
+                      color: qrPhase === 'scanned' ? V.ok : V.sub,
+                      marginBottom: 8,
+                    },
+                  }, qrMsg),
+                  h(Button, { onClick: beginQr, disabled: qrPhase === 'scanned' }, '换一张'),
                 ),
               )
             : h(
                 'div',
                 null,
-                h('div', { style: { fontSize: 12.5, color: V.sub, lineHeight: 1.7, marginBottom: 9 } },
-                  '字幕和完整评论区都需要登录。扫码即可，不用输密码，也不用开开发者工具。'),
-                h('div', { style: { display: 'flex', alignItems: 'center', gap: 10 } },
-                  h(Button, { primary: true, onClick: beginQr, disabled: qrBusy },
-                    qrBusy ? '等待扫码…' : '扫码登录 B 站'),
-                  qrMsg ? h('span', { style: { fontSize: 12, color: qrMsg.includes('成功') ? V.ok : V.warn } }, qrMsg) : null,
+                h('div', { style: { fontSize: 12, color: V.sub, lineHeight: 1.7, marginBottom: 9 } },
+                  '扫码即可，不用输密码，也不用开开发者工具。'),
+                h(
+                  'div',
+                  { style: { display: 'flex', alignItems: 'center', gap: 10 } },
+                  h(Button, { primary: !(login && login.ok), onClick: beginQr },
+                    login && login.ok ? '换账号登录' : '扫码登录 B 站'),
+                  qrMsg
+                    ? h('span', {
+                        style: {
+                          fontSize: 12,
+                          color: qrPhase === 'success' ? V.ok : qrPhase === 'error' || qrPhase === 'expired' ? V.warn : V.sub,
+                        },
+                      }, qrMsg)
+                    : null,
                 ),
               ),
         ),
