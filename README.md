@@ -49,7 +49,7 @@ git clone https://github.com/admiremaozhuxi/dsh-bili-learn.git
 ```
 
 1. DSH → **Plugins → Add plugin** → 选 `plugin/` 目录
-2. 左侧栏出现「B站学习器」→ 打开 → 点**扫码登录**（手机扫一下，不用输密码）
+2. 左侧栏出现「B站视频小工具」→ 打开 → 点**扫码登录**（手机扫一下，不用输密码）
 3. 直接说：「学习B站上×××，帮我做×××」
 
 首次「看画面」时插件会自己下载一个 ffmpeg（约 28 MB，国内镜像约 5 秒），之后不再下。
@@ -105,7 +105,7 @@ git clone https://github.com/admiremaozhuxi/dsh-bili-learn.git
 | `bili_frames` | **看画面**：抽帧 + 视觉模型，读 PPT、屏幕代码、界面状态 |
 | `bili_transcribe` | **声音转文字**：没字幕时把口播转成文字，不用登录 |
 | `bili_sources` | **查来源**：现在哪些来源能用、多快，用于决定采集计划 |
-| `bili_config` | 读写取数方式、并行度、自建服务器、登录凭证 |
+| `bili_config` | 读写取数方式、阅读编排、自建服务器、登录凭证 |
 
 面板里也能直接改设置（取数方式、并发、自己的服务器、第三方站开关），点保存立即生效。
 

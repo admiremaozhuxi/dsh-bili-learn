@@ -424,7 +424,7 @@ function toMarkdown(v) {
 async function harvest(args, settings) {
   const mode = settings.mode || 'auto'
   if (mode === 'default') {
-    return { ok: false, note: '取数方式设为「默认（什么都不做）」，请先切换为 auto 或 direct。', videos: [], count: 0 }
+    return { ok: false, note: '取数方式设为「不取视频文件」，请先切换为 auto 或 direct。', videos: [], count: 0 }
   }
 
   const opts = { cookie: settings.cookie || '', gapMs: Math.max(300, Number(settings.gapMs) || 1200) }
@@ -1585,7 +1585,7 @@ function registerCommands(ctx) {
   ctx.effect(() =>
     ctx.commands.register({
       name: 'bili',
-      description: 'B站学习器：查看或修改取数方式、并发、自建服务器、登录态',
+      description: 'B站视频小工具：查看或修改取数方式、并发、自建服务器、登录态',
       input: { hint: 'mode auto | videos 3 | agents 2-4 | total 12 | endpoint URL | test | status' },
       async handler(inv) {
         const raw = String(inv.rawInput || '').trim()

@@ -969,7 +969,7 @@ window.__ModuleLoader__.load({
         h(
           'div',
           { style: { maxWidth: 720 } },
-          h('div', { style: { fontSize: 18, fontWeight: 600, color: V.text } }, 'B站学习器'),
+          h('div', { style: { fontSize: 18, fontWeight: 600, color: V.text } }, 'B站视频小工具'),
           h('div', { style: { fontSize: 12.5, color: V.sub, marginTop: 4, lineHeight: 1.6 } },
             '把 B 站视频变成能读的笔记：字幕、评论、声音转文字、画面理解。'),
           h(
@@ -993,7 +993,7 @@ window.__ModuleLoader__.load({
       apply(ctx) {
         ctx.slots.inject('sidebar.panellist', () =>
           ctx.slots.register(
-            { name: 'sidebar.panellist', id: 'bili-learn', order: 25, label: 'B站学习器' },
+            { name: 'sidebar.panellist', id: 'bili-learn', order: 25, label: 'B站视频小工具' },
             Icon,
           ),
         )
