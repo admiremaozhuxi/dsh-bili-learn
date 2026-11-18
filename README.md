@@ -108,14 +108,26 @@ curl "http://127.0.0.1:8848/playurl?bvid=BV1xx&cid=123"
 
 ## 关于字幕
 
-这是唯一的硬约束：**字幕需要登录态**。
+这是唯一的硬约束：**字幕需要登录态**。实测无 cookie 时，`player/wbi/v2` 返回 `code=0` 但字幕数组为空，连 `ai_status` 字段都不返回 —— B 站把整个字幕对象阉割了，所以「拿 AI 字幕免登录」这条路不存在。
 
-两条路：
+三条路，按可靠性排序：
 
-1. **配 `SESSDATA`** —— 在对话里说「给 B站学习器配置 SESSDATA」，或直接写 `~/.dsh-bili-learn/settings.json`
-2. **音频转写** —— 用 `/playurl` 拿音频直链，走云端 ASR。注意本项目的默认 `gapMs=1200` 是为了不触发风控，转写吞吐受此限制
+| 方式 | 操作 | 说明 |
+|---|---|---|
+| **扫码登录** | 调 `start_qr_login` 取二维码，B 站 App 扫一下 | 最可靠，一次搞定，凭据落在本地 |
+| **手工复制 SESSDATA** | 浏览器 F12 → Application → Cookies → `https://www.bilibili.com` → 复制 `SESSDATA` | 30 秒，写进 `~/.dsh-bili-learn/settings.json` |
+| 复用浏览器 cookie | `python tools/browser_cookie.py` | 仅对旧版浏览器有效：Edge/Chrome 127+ 已改用 **v20 app-bound 加密**，需要 SYSTEM 权限解第一层密钥，用户态解不开（本脚本会给出这个提示而不是静默失败） |
 
-浏览器的字幕类扩展能取到字幕，是因为它们在 B 站页面内带着你的登录态发请求 —— 这也从侧面印证了上面的结论。
+### 第三方方案实测
+
+| 方案 | 结论 |
+|---|---|
+| 公开在线解析站 | 只返回视频/图片直链，**不给字幕**；主力站点响应 12 秒以上超时 |
+| Bilibili Toolkit Free（SkillHub） | 描述全是 `input_params` / `config_options` 这类模板占位，空壳；它自己也承认「没字幕时会尝试语音识别转写」 |
+| 浏览器字幕扩展（BiliBili 字幕提取器、Bilitato 等） | 确实能取到字幕，但**靠的是你浏览器里的登录态**，而且要人工在视频页点一下 —— 反过来印证了上面那条结论 |
+| apify `video-subtitle-extractor` | 付费 API（约 $5 / 1000 次），原生字幕优先，没有则走 Whisper。要接商业账号 |
+
+一句话：**字幕这关绕不过登录，区别只在「谁来登录」。**
 
 ---
 
