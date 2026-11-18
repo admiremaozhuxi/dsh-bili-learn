@@ -211,4 +211,16 @@ mcp/polylens/    可选：接 polylens 作为第二数据源
 
 ## License
 
-MIT
+MIT —— 可以自由使用、修改、分发，包括商用，条件是保留版权声明。
+
+## 归属
+
+本项目及其中的实测数据、踩坑记录、文档由 **dsh-bili-learn contributors** 创作，首次公开于 2026-11-18。
+
+代码可以被学习、引用、改进。如果你把它做成产品或服务，请保留出处：
+
+```
+基于 dsh-bili-learn（https://github.com/admiremaozhuxi/dsh-bili-learn）
+```
+
+文中标注的实测数字（字幕覆盖率 11%、412 阈值约 30 次、jq 超时、POST 405 等）都是在本项目里实际跑出来的结论，引用时请连同出处一起带上，避免它们变成无主的「网上说法」。

@@ -3,6 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "license": "MIT",
+  "author": "dsh-bili-learn contributors",
   "description": "Treat Bilibili as a research corpus: search high-view videos, harvest subtitles and comments, hand them to subagents for study.",
   "exports": {
     ".": "./index.js",
