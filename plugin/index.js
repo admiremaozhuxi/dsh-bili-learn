@@ -589,7 +589,7 @@ async function harvest(args, settings) {
               .split(/\n+/)
               .filter(Boolean)
               .map((t) => ({ from: 0, to: 0, text: t })),
-            trace: `转写(${tr.seconds}s)`,
+            trace: `转写(耗时${tr.seconds}s)`,
           }
           transcribed.push(v.bvid)
           asrUsed += 1
