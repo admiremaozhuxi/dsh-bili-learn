@@ -59,6 +59,10 @@ const DEFAULT_SETTINGS = {
   maxTotalAgents: 12,
   // 采集时最多尝试几个视频。没字幕的会跳过并继续找下一个，这是硬上限
   maxAttempts: 30,
+  // 没字幕轨时是否改用音频转写补正文。慢（约等于音频时长），默认关
+  fillByTranscribe: false,
+  // 开启转写后最多补几条，防止一次跑太久
+  transcribeCap: 3,
 }
 
 /* ------------------------------------------------------------------ settings */
@@ -497,7 +501,12 @@ async function harvest(args, settings) {
   const withComments = args.withComments !== false
   const results = []
   const skipped = []
+  const transcribed = []
   let tried = 0
+  // 没字幕时改用音频转写：慢（约等于音频时长），所以默认关，且限量
+  const fillByAsr = args.fillByTranscribe === true || settings.fillByTranscribe === true
+  const asrCap = Math.min(Math.max(Number(settings.transcribeCap) || 3, 0), 10)
+  let asrUsed = 0
 
   for (const v of candidates) {
     if (results.length >= maxVideos) break
@@ -511,9 +520,35 @@ async function harvest(args, settings) {
       if (withComments) comments = await getComments(v.aid, opts, { limit: 20, maxPages: 1 })
     }
 
-    // 没字幕就拿不到正文，跳过它继续找下一个，别让它占掉一个名额。
+    // 没有字幕轨不等于没有内容——口播可以转写。只是逐条转写太慢，
+    // 所以按开关和上限来，转成功的当作正文用。
+    if (!subs.lines.length && fillByAsr && page?.cid && asrUsed < asrCap) {
+      try {
+        const tr = await transcribeAudio(v.bvid, page.cid, settings)
+        if (tr.ok && String(tr.text || '').trim().length >= 30) {
+          subs = {
+            lines: String(tr.text)
+              .split(/\n+/)
+              .filter(Boolean)
+              .map((t) => ({ from: 0, to: 0, text: t })),
+            trace: `转写(${tr.seconds}s)`,
+          }
+          transcribed.push(v.bvid)
+          asrUsed += 1
+        }
+      } catch {
+        /* 转写失败按无内容处理 */
+      }
+    }
+
+    // 还是没有：记录下 bvid，让调用方决定要不要单独补转写或抽帧
     if (!subs.lines.length) {
-      skipped.push({ bvid: v.bvid, title: v.title, play: Number(v.play) || 0, reason: subs.trace })
+      skipped.push({
+        bvid: v.bvid,
+        title: v.title,
+        play: Number(v.play) || 0,
+        reason: subs.trace,
+      })
       continue
     }
 
@@ -549,18 +584,28 @@ async function harvest(args, settings) {
     'utf8',
   )
 
-  // 全部被跳过：试了一圈没有一条有字幕，这是失败而不是成功，要说清楚。
+  // 全部被跳过：试了一圈没有一条拿到正文，这是失败而不是成功，要说清楚。
   if (!results.length) {
+    const list = skipped.slice(0, 5).map((s) => s.bvid).join(', ')
     const why = skipped.length
-      ? `试了 ${tried} 个视频都没有字幕，一条没收到。${
-          settings.cookie ? '这些视频本身没有字幕，可以改用 bili_transcribe 走音频转写。' : '先扫码登录，字幕需要登录态。'
-        }`
+      ? `试了 ${tried} 个视频都没拿到正文（${list}${skipped.length > 5 ? ' 等' : ''}）。` +
+        (settings.cookie
+          ? '它们没有字幕轨，可以对其中几条调用 bili_transcribe 转写，或用 bili_frames 看画面。'
+          : '字幕需要登录态，先扫码登录；也可以对单条调用 bili_transcribe —— 转写不需要登录。')
       : `试了 ${tried} 个视频都没取到内容。`
-    return { ok: false, mode: effective, dir, count: 0, tried, skipped, videos: [], note: why }
+    return { ok: false, mode: effective, dir, count: 0, tried, skipped, transcribed, videos: [], note: why }
   }
 
+  if (transcribed.length) {
+    notes.push(`其中 ${transcribed.length} 个没有字幕轨，已用音频转写补上。`)
+  }
   if (skipped.length) {
-    notes.push(`试了 ${tried} 个，收到 ${results.length} 个，跳过 ${skipped.length} 个没有字幕的。`)
+    const list = skipped.slice(0, 5).map((s) => s.bvid).join(', ')
+    notes.push(
+      `试了 ${tried} 个，收到 ${results.length} 个，跳过 ${skipped.length} 个没字幕的（${list}${
+        skipped.length > 5 ? ' 等' : ''
+      }）。要这些的内容，可以对它们调用 bili_transcribe 转写，或用 bili_frames 看画面。`,
+    )
   }
 
   return {
@@ -570,6 +615,7 @@ async function harvest(args, settings) {
     count: results.length,
     tried,
     skipped,
+    transcribed,
     videos: results,
     note: notes.join(' '),
   }
@@ -974,6 +1020,14 @@ function registerTools(ctx) {
             type: 'integer',
             description: '采集时最多尝试几个视频。没字幕的会跳过继续找，这是硬上限。1-60。',
           },
+          fillByTranscribe: {
+            type: 'boolean',
+            description: '没字幕轨时是否改用音频转写补正文。慢，默认 false。',
+          },
+          transcribeCap: {
+            type: 'integer',
+            description: '开启转写后一次最多补几条。0-10。',
+          },
           endpoint: { type: 'string', description: 'Self-hosted parse service base URL.' },
           cookie: { type: 'string', description: 'Bilibili login cookie, normally the SESSDATA pair.' },
           proxies: { type: 'array', items: { type: 'string' }, description: 'Third-party parser base URLs.' },
@@ -990,6 +1044,8 @@ function registerTools(ctx) {
             agentsPerVideoMax: { type: 'integer' },
             maxTotalAgents: { type: 'integer' },
             maxAttempts: { type: 'integer' },
+            fillByTranscribe: { type: 'boolean' },
+            transcribeCap: { type: 'integer' },
             endpoint: { type: 'string' },
             cookieSet: { type: 'boolean' },
             proxies: { type: 'array', items: { type: 'string' } },
@@ -1004,6 +1060,7 @@ function registerTools(ctx) {
               `每个视频分配 AI：${value.agentsPerVideoMin}-${value.agentsPerVideoMax} 个（长的会超过，靠空闲的补）`,
               `AI 总数上限：${value.maxTotalAgents}`,
               `最多尝试视频数：${value.maxAttempts}`,
+              `没字幕时转写补齐：${value.fillByTranscribe ? `开（最多 ${value.transcribeCap} 条）` : '关'}`,
               `自建服务器：${value.endpoint}`,
               `登录凭证：${value.cookieSet ? '已配置' : '未配置（字幕为空）'}`,
               `第三方池：${(value.proxies || []).length ? value.proxies.join(', ') : '（空）'}`,
@@ -1030,6 +1087,12 @@ function registerTools(ctx) {
         if (args.maxAttempts) {
           patch.maxAttempts = Math.min(Math.max(Number(args.maxAttempts), 1), 60)
         }
+        if (typeof args.fillByTranscribe === 'boolean') {
+          patch.fillByTranscribe = args.fillByTranscribe
+        }
+        if (args.transcribeCap !== undefined) {
+          patch.transcribeCap = Math.min(Math.max(Number(args.transcribeCap), 0), 10)
+        }
         if (patch.agentsPerVideoMin && patch.agentsPerVideoMax && patch.agentsPerVideoMin > patch.agentsPerVideoMax) {
           const lo = patch.agentsPerVideoMin
           patch.agentsPerVideoMin = patch.agentsPerVideoMax
@@ -1046,6 +1109,8 @@ function registerTools(ctx) {
           agentsPerVideoMax: s.agentsPerVideoMax ?? 4,
           maxTotalAgents: s.maxTotalAgents ?? 12,
           maxAttempts: s.maxAttempts ?? 30,
+    fillByTranscribe: Boolean(s.fillByTranscribe),
+    transcribeCap: s.transcribeCap ?? 3,
           endpoint: s.endpoint,
           cookieSet: Boolean(s.cookie),
           proxies: s.proxies || [],
@@ -1984,6 +2049,13 @@ function registerHttpApi(ctx) {
                 const attempts = Number(patch.maxAttempts)
                 if (Number.isFinite(attempts)) {
                   cleanPatch.maxAttempts = Math.min(Math.max(Math.round(attempts), 1), 60)
+                }
+                if (typeof patch.fillByTranscribe === 'boolean') {
+                  cleanPatch.fillByTranscribe = patch.fillByTranscribe
+                }
+                const tcap = Number(patch.transcribeCap)
+                if (Number.isFinite(tcap)) {
+                  cleanPatch.transcribeCap = Math.min(Math.max(Math.round(tcap), 0), 10)
                 }
                 // 区间要自洽：min 不得大于 max
                 if (cleanPatch.agentsPerVideoMin !== undefined || cleanPatch.agentsPerVideoMax !== undefined) {

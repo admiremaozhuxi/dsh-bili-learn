@@ -196,6 +196,8 @@ window.__ModuleLoader__.load({
       const [aMax, setAMax] = useState(4)
       const [aTotal, setATotal] = useState(12)
       const [attempts, setAttempts] = useState(30)
+      const [fillAsr, setFillAsr] = useState(false)
+      const [asrCap, setAsrCap] = useState(3)
       const [gap, setGap] = useState(1200)
       const [advanced, setAdvanced] = useState(false)
       const [status, setStatus] = useState('')   // '' | 'saving' | 'saved' | 'error'
@@ -328,6 +330,8 @@ window.__ModuleLoader__.load({
               setAMax(d.settings.agentsPerVideoMax ?? 4)
               setATotal(d.settings.maxTotalAgents ?? 12)
               setAttempts(d.settings.maxAttempts ?? 30)
+              setFillAsr(Boolean(d.settings.fillByTranscribe))
+              setAsrCap(d.settings.transcribeCap ?? 3)
               setGap(d.settings.gapMs || 1200)
               setEndpoint(d.settings.endpoint || '')
               setDisabled(d.settings.disabledSources || [])
@@ -368,6 +372,8 @@ window.__ModuleLoader__.load({
             agentsPerVideoMax: aMax,
             maxTotalAgents: aTotal,
             maxAttempts: attempts,
+            fillByTranscribe: fillAsr,
+            transcribeCap: asrCap,
             gapMs: gap,
             endpoint,
             disabledSources: disabled,
@@ -622,6 +628,38 @@ window.__ModuleLoader__.load({
         ),
         h('div', { style: { fontSize: 11.5, color: V.sub, lineHeight: 1.7, marginBottom: 20 } },
           '抓到没有字幕的视频会自动跳过、继续找下一个，不会白占名额。这个值是硬上限，防止一路试到搜索结果的尽头。'),
+
+        h(Label, null, '没字幕时转写补齐'),
+        h(
+          'div',
+          {
+            style: {
+              background: V.card, border: `1px solid ${V.line}`, borderRadius: 8,
+              padding: '12px 14px', marginBottom: 20,
+            },
+          },
+          h(
+            'label',
+            { style: { display: 'flex', alignItems: 'center', gap: 9, cursor: 'pointer' } },
+            h('input', {
+              type: 'checkbox',
+              checked: fillAsr,
+              onChange: () => { setFillAsr((v) => !v); setStatus('') },
+              style: { accentColor: V.brand, margin: 0 },
+            }),
+            h('span', { style: { fontSize: 12.5, color: V.text } }, '没有字幕轨时，改用音频转写拿正文'),
+          ),
+          h('div', { style: { fontSize: 11.5, color: V.sub, lineHeight: 1.7, marginTop: 8 } },
+            '转写耗时约等于音频长度，所以默认关。开启后一次最多补 ',
+            h('span', { style: { fontFamily: MONO, color: V.text } }, String(asrCap)),
+            ' 条：',
+            h(Button, { onClick: () => { setAsrCap((n) => Math.max(0, n - 1)); setStatus('') }, disabled: asrCap <= 0 }, '−'),
+            ' ',
+            h(Button, { onClick: () => { setAsrCap((n) => Math.min(10, n + 1)); setStatus('') }, disabled: asrCap >= 10 }, '+'),
+          ),
+          h('div', { style: { fontSize: 11.5, color: V.sub, lineHeight: 1.7, marginTop: 6 } },
+            '不想等也可以关掉，事后对具体某条视频单独用 bili_transcribe 或 bili_frames。'),
+        ),
 
         // 高级：默认收起，避免小白被「毫秒」吓到
         h(
