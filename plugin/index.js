@@ -203,6 +203,39 @@ async function getCid(bvid, opts) {
   return first ? { cid: first.cid, parts: (d.data || []).length, duration: Number(first.duration) || 0 } : null
 }
 
+/**
+ * 取一条视频的完整元信息（含 aid）。
+ *
+ * 评论接口只认 aid，而 pagelist 不带 aid。无 cookie 时 view 会被 412 挡回，
+ * 但实测登录后 wbi/view 正常返回，所以这里按「有 cookie 才试」的策略走，
+ * 失败不影响其他字段。
+ */
+async function getViewMeta(bvid, opts) {
+  const cookie = (opts && opts.cookie) || ''
+  const gapMs = (opts && opts.gapMs) || 600
+  if (!cookie) return null
+  try {
+    const key = await mixinKey(cookie, gapMs)
+    const url = key
+      ? signed(`${API}/x/web-interface/wbi/view`, { bvid }, key)
+      : `${API}/x/web-interface/view?bvid=${bvid}`
+    const d = await getJson(url, { cookie, referer: `https://www.bilibili.com/video/${bvid}` })
+    if (d.code !== 0) return null
+    const v = d.data || {}
+    return {
+      aid: v.aid,
+      cid: v.cid,
+      duration: Number(v.duration) || 0,
+      title: v.title,
+      desc: v.desc,
+      owner: v?.owner?.name,
+      stat: v.stat,
+    }
+  } catch {
+    return null
+  }
+}
+
 async function getSubtitles(bvid, cid, opts) {
   const { cookie, gapMs } = opts
   const key = await mixinKey(cookie, gapMs)
@@ -729,15 +762,20 @@ function registerTools(ctx) {
         if (!/^BV[0-9A-Za-z]+$/.test(bvid)) {
           return { ok: false, bvid, subtitleTrace: 'invalid bvid', subtitleLines: 0, comments: 0 }
         }
-        const page = await getCid(bvid, opts)
+        // 评论要 aid；pagelist 不给，只有登录后 view 才稳
+        const meta = await getViewMeta(bvid, opts)
+        const page = meta?.cid ? { cid: meta.cid } : await getCid(bvid, opts)
         if (!page?.cid) {
           return { ok: false, bvid, subtitleTrace: 'pagelist failed', subtitleLines: 0, comments: 0 }
         }
         const subs = await getSubtitles(bvid, page.cid, opts)
+        const aid = meta?.aid || args.aid
         const comments =
-          args.withComments === false || !args.aid
-            ? { items: [], trace: args.withComments === false ? 'skipped' : 'no_aid' }
-            : await getComments(args.aid, opts)
+          args.withComments === false
+            ? { items: [], trace: 'skipped' }
+            : aid
+              ? await getComments(aid, opts)
+              : { items: [], trace: 'no_aid（登录后可得）' }
         await mkdir(HARVEST_ROOT, { recursive: true })
         const file = path.join(HARVEST_ROOT, `${bvid}.md`)
         await writeFile(
