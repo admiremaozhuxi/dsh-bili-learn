@@ -869,8 +869,173 @@ function registerTools(ctx) {
   )
 }
 
-export const inject = ['tools']
+/* ------------------------------------------------------------------ commands */
+
+/**
+ * One operation, two callers: the panel button and the /bili command both go
+ * through these handlers, so the UI never has its own copy of the logic.
+ */
+function registerCommands(ctx) {
+  ctx.effect(() =>
+    ctx.commands.register({
+      name: 'bili',
+      description: 'B站学习器：查看或修改取数方式、并发、自建服务器、登录态',
+      input: { hint: 'mode auto | concurrency 6 | endpoint URL | test | status' },
+      async handler(inv) {
+        const raw = String(inv.rawInput || '').trim()
+        const parts = raw.split(/\s+/).filter(Boolean)
+        const verb = (parts[0] || 'status').toLowerCase()
+        const arg = parts.slice(1).join(' ').trim()
+
+        try {
+          if (verb === 'status' || verb === '') {
+            const s = await loadSettings()
+            return {
+              kind: 'success',
+              text:
+                `取数方式 ${s.mode} · 并发 ${s.concurrency} · 间隔 ${s.gapMs}ms\n` +
+                `自建服务器 ${s.endpoint || '（未设置）'}\n` +
+                `登录凭证 ${s.cookie ? '已配置' : '未配置'}\n` +
+                `配置文件 ${SETTINGS_FILE}`,
+            }
+          }
+
+          if (verb === 'mode') {
+            const allowed = ['default', 'direct', 'self', 'proxy', 'auto']
+            if (!allowed.includes(arg)) {
+              return { kind: 'error', text: `取数方式必须是 ${allowed.join(' / ')}` }
+            }
+            await saveSettings({ mode: arg })
+            return { kind: 'success', text: `取数方式已设为 ${arg}` }
+          }
+
+          if (verb === 'concurrency') {
+            const n = Number(arg)
+            if (!Number.isFinite(n) || n < 1 || n > 12) {
+              return { kind: 'error', text: '并发数必须是 1 到 12 之间的整数' }
+            }
+            await saveSettings({ concurrency: Math.round(n) })
+            return { kind: 'success', text: `并发已设为 ${Math.round(n)}` }
+          }
+
+          if (verb === 'endpoint') {
+            await saveSettings({ endpoint: arg })
+            return {
+              kind: 'success',
+              text: arg ? `自建服务器已设为 ${arg}` : '已清空自建服务器地址',
+            }
+          }
+
+          if (verb === 'gap') {
+            const n = Number(arg)
+            if (!Number.isFinite(n) || n < 300 || n > 5000) {
+              return { kind: 'error', text: '间隔必须是 300 到 5000 毫秒' }
+            }
+            await saveSettings({ gapMs: Math.round(n) })
+            return { kind: 'success', text: `请求间隔已设为 ${Math.round(n)}ms` }
+          }
+
+          if (verb === 'cookie') {
+            if (!arg) {
+              const s = await loadSettings()
+              return {
+                kind: 'success',
+                text: s.cookie ? '已配置登录凭证' : '尚未配置登录凭证（字幕会为空）',
+              }
+            }
+            await saveSettings({ cookie: arg })
+            return { kind: 'success', text: `登录凭证已保存（${arg.length} 字符）` }
+          }
+
+          if (verb === 'clearcookie') {
+            await saveSettings({ cookie: '' })
+            return { kind: 'success', text: '登录凭证已清除' }
+          }
+
+          if (verb === 'test') {
+            const s = await loadSettings()
+            const lines = []
+            // 自建服务
+            if (s.endpoint) {
+              const hlt = await selfHealth(s.endpoint)
+              lines.push(hlt.ok ? `自建服务器 在线（${s.endpoint}）` : `自建服务器 不可达（${s.endpoint}）`)
+            } else {
+              lines.push('自建服务器 未设置')
+            }
+            // 登录态
+            const nav = await getJson(`${API}/x/web-interface/nav`, {
+              cookie: s.cookie || '',
+              gapMs: 400,
+            })
+            const logged = Boolean(nav?.data?.isLogin)
+            lines.push(logged ? `登录态 有效（${nav?.data?.uname || '已登录'}）` : '登录态 无效或未配置')
+            return { kind: 'success', text: lines.join('\n') }
+          }
+
+          if (verb === 'set') {
+            // 面板用这个：一次提交多项，key=value 以空格分隔
+            const patch = {}
+            const bad = []
+            for (const token of parts.slice(1)) {
+              const eq = token.indexOf('=')
+              if (eq < 0) {
+                bad.push(token)
+                continue
+              }
+              const k = token.slice(0, eq).toLowerCase()
+              const v = token.slice(eq + 1)
+              if (k === 'mode') {
+                if (['default', 'direct', 'self', 'proxy', 'auto'].includes(v)) patch.mode = v
+                else bad.push(`mode=${v}`)
+              } else if (k === 'concurrency') {
+                const n = Number(v)
+                if (Number.isFinite(n) && n >= 1 && n <= 12) patch.concurrency = Math.round(n)
+                else bad.push(`concurrency=${v}`)
+              } else if (k === 'gap') {
+                const n = Number(v)
+                if (Number.isFinite(n) && n >= 300 && n <= 5000) patch.gapMs = Math.round(n)
+                else bad.push(`gap=${v}`)
+              } else if (k === 'endpoint') {
+                patch.endpoint = v
+              } else {
+                bad.push(token)
+              }
+            }
+            if (bad.length) {
+              return { kind: 'error', text: `无法识别的参数：${bad.join(', ')}` }
+            }
+            if (!Object.keys(patch).length) {
+              return { kind: 'error', text: '没有可应用的参数' }
+            }
+            const s2 = await saveSettings(patch)
+            return {
+              kind: 'success',
+              text:
+                `已应用：${Object.keys(patch).join(', ')}\n` +
+                `当前 取数方式 ${s2.mode} · 并发 ${s2.concurrency} · 间隔 ${s2.gapMs}ms · 服务器 ${s2.endpoint || '未设置'}`,
+            }
+          }
+
+          if (verb === 'reset') {
+            await saveSettings({ ...DEFAULT_SETTINGS })
+            return { kind: 'success', text: '配置已恢复默认' }
+          }
+
+          return {
+            kind: 'error',
+            text: `未知子命令 ${verb}。可用：status / mode / concurrency / endpoint / gap / cookie / clearcookie / test / reset`,
+          }
+        } catch (err) {
+          return { kind: 'error', text: `执行失败：${String(err).slice(0, 200)}` }
+        }
+      },
+    }),
+  )
+}
+
+export const inject = ['tools', 'commands']
 
 export function apply(ctx) {
   registerTools(ctx)
+  registerCommands(ctx)
 }
