@@ -171,6 +171,27 @@ window.__ModuleLoader__.load({
       const [status, setStatus] = useState('')   // '' | 'saving' | 'saved' | 'error'
       const [testResult, setTestResult] = useState(null)
       const [testing, setTesting] = useState(false)
+      const [copied, setCopied] = useState('')
+
+      // 仅在本地接口不可用时使用：把同样的改动做成一条命令
+      const copyCommand = async (text) => {
+        try {
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(text)
+          } else {
+            const el = document.createElement('textarea')
+            el.value = text
+            document.body.appendChild(el)
+            el.select()
+            document.execCommand('copy')
+            document.body.removeChild(el)
+          }
+          setCopied('ok')
+        } catch (err) {
+          setCopied('fail')
+        }
+        setTimeout(() => setCopied(''), 1600)
+      }
 
       // 打开面板就读真实配置
       useEffect(() => {
@@ -329,8 +350,32 @@ window.__ModuleLoader__.load({
         ),
 
         loadError
-          ? h('div', { style: { marginTop: 12, fontSize: 12, color: V.err, lineHeight: 1.7 } },
-              '读不到当前设置（' + loadError + '）。可能插件需要重启一次 DSH。')
+          ? h(
+              'div',
+              {
+                style: {
+                  marginTop: 14, padding: '11px 13px', background: V.card,
+                  border: `1px solid ${V.line}`, borderRadius: 8, fontSize: 12.5, lineHeight: 1.9,
+                },
+              },
+              h('div', { style: { color: V.warn, marginBottom: 4 } }, '面板连不上设置接口（' + loadError + '）'),
+              h('div', { style: { color: V.sub } },
+                '可能是这个版本没开放本地接口。可以直接用命令改，效果一样：'),
+              h('div', {
+                style: {
+                  margin: '8px 0', padding: '8px 10px', background: V.sunken,
+                  borderRadius: 6, fontFamily: MONO, fontSize: 11.5,
+                  color: V.text, wordBreak: 'break-all',
+                },
+              }, `/bili set mode=${mode} concurrency=${conc} gapMs=${gap}`),
+              h(
+                Button,
+                { onClick: () => copyCommand(`/bili set mode=${mode} concurrency=${conc} gapMs=${gap}`) },
+                '复制这条命令',
+              ),
+              h('div', { style: { color: V.sub, marginTop: 6, fontSize: 11.5 } },
+                '粘到对话框回车即可。'),
+            )
           : null,
 
         testResult

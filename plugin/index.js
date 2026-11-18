@@ -1040,12 +1040,19 @@ function registerCommands(ctx) {
  *
  * Why HTTP instead of a Remote call: a Client plugin has no write access to Host
  * files, and the `main` slot is root-scoped with no session binding, so there is
- * no agent to address a Remote command with. A local route sidesteps both
- * problems and keeps the panel to one click.
+ * no agent to address a Remote command with.
+ *
+ * `webServer` is looked up with optional injection rather than a hard `inject`
+ * entry, so a profile without the browser carrier keeps every tool working and
+ * the panel reports the missing route instead of the whole plugin going dark.
+ * A small diagnostic file records what happened, because "404" alone cannot tell
+ * a missing service from a missing route.
  */
 function registerHttpApi(ctx) {
-  const ws = ctx.get('webServer')
-  if (!ws || typeof ws.register !== 'function') return
+  const writeDiag = (payload) =>
+    writeFile(path.join(HARVEST_ROOT, '..', 'diag.json'), JSON.stringify(payload, null, 2), 'utf8').catch(
+      () => {},
+    )
 
   const view = (s) => ({
     mode: s.mode,
@@ -1056,74 +1063,98 @@ function registerHttpApi(ctx) {
     settingsFile: SETTINGS_FILE,
   })
 
-  ctx.effect(() =>
-    ws.register({
-      kind: 'exact',
-      path: '/bili-learn/settings',
-      resource: async (request) => {
-        try {
-          if (request.method === 'POST') {
-            let patch = {}
-            try {
-              patch = await request.json()
-            } catch {
-              patch = {}
-            }
-            const clean = {}
-            if (patch && typeof patch === 'object') {
-              if (
-                typeof patch.mode === 'string' &&
-                ['default', 'direct', 'self', 'proxy', 'auto'].includes(patch.mode)
-              ) {
-                clean.mode = patch.mode
-              }
-              const conc = Number(patch.concurrency)
-              if (Number.isFinite(conc)) {
-                clean.concurrency = Math.min(Math.max(Math.round(conc), 1), 12)
-              }
-              const gap = Number(patch.gapMs)
-              if (Number.isFinite(gap)) {
-                clean.gapMs = Math.min(Math.max(Math.round(gap), 300), 5000)
-              }
-              if (typeof patch.endpoint === 'string') clean.endpoint = patch.endpoint.trim()
-              if (typeof patch.cookie === 'string') clean.cookie = patch.cookie.trim()
-            }
-            const s = await saveSettings(clean)
-            return Response.json({ ok: true, settings: view(s) })
-          }
-          const s = await loadSettings()
-          return Response.json({ ok: true, settings: view(s) })
-        } catch (err) {
-          return Response.json({ ok: false, error: String(err).slice(0, 200) }, { status: 500 })
-        }
-      },
-    }),
-  )
+  ctx.inject(['webServer'], (c) => {
+    let origin = ''
+    try {
+      origin = c.webServer.getOrigin()
+    } catch {
+      origin = '(unavailable)'
+    }
+    writeDiag({
+      at: new Date().toISOString(),
+      stage: 'injected',
+      webServer: true,
+      canRegister: typeof c.webServer.register === 'function',
+      origin,
+    })
 
-  ctx.effect(() =>
-    ws.register({
-      kind: 'exact',
-      path: '/bili-learn/test',
-      resource: async () => {
-        try {
-          const s = await loadSettings()
-          const out = { ok: true, self: null, login: null }
-          if (s.endpoint) {
-            const h = await selfHealth(s.endpoint)
-            out.self = { ok: Boolean(h.ok), endpoint: s.endpoint }
+    c.effect(() =>
+      c.webServer.register({
+        kind: 'exact',
+        path: '/bili-learn/settings',
+        resource: async (request) => {
+          try {
+            if (request.method === 'POST') {
+              let patch = {}
+              try {
+                patch = await request.json()
+              } catch {
+                patch = {}
+              }
+              const cleanPatch = {}
+              if (patch && typeof patch === 'object') {
+                if (
+                  typeof patch.mode === 'string' &&
+                  ['default', 'direct', 'self', 'proxy', 'auto'].includes(patch.mode)
+                ) {
+                  cleanPatch.mode = patch.mode
+                }
+                const conc = Number(patch.concurrency)
+                if (Number.isFinite(conc)) {
+                  cleanPatch.concurrency = Math.min(Math.max(Math.round(conc), 1), 12)
+                }
+                const gap = Number(patch.gapMs)
+                if (Number.isFinite(gap)) {
+                  cleanPatch.gapMs = Math.min(Math.max(Math.round(gap), 300), 5000)
+                }
+                if (typeof patch.endpoint === 'string') cleanPatch.endpoint = patch.endpoint.trim()
+                if (typeof patch.cookie === 'string') cleanPatch.cookie = patch.cookie.trim()
+              }
+              const s = await saveSettings(cleanPatch)
+              return Response.json({ ok: true, settings: view(s) })
+            }
+            const s = await loadSettings()
+            return Response.json({ ok: true, settings: view(s) })
+          } catch (err) {
+            return Response.json({ ok: false, error: String(err).slice(0, 200) }, { status: 500 })
           }
-          const nav = await getJson(`${API}/x/web-interface/nav`, {
-            cookie: s.cookie || '',
-            gapMs: 400,
-          })
-          out.login = { ok: Boolean(nav?.data?.isLogin), name: nav?.data?.uname || '' }
-          return Response.json(out)
-        } catch (err) {
-          return Response.json({ ok: false, error: String(err).slice(0, 200) }, { status: 500 })
-        }
-      },
-    }),
-  )
+        },
+      }),
+    )
+
+    c.effect(() =>
+      c.webServer.register({
+        kind: 'exact',
+        path: '/bili-learn/test',
+        resource: async () => {
+          try {
+            const s = await loadSettings()
+            const out = { ok: true, self: null, login: null }
+            if (s.endpoint) {
+              const hlt = await selfHealth(s.endpoint)
+              out.self = { ok: Boolean(hlt.ok), endpoint: s.endpoint }
+            }
+            const nav = await getJson(`${API}/x/web-interface/nav`, {
+              cookie: s.cookie || '',
+              gapMs: 400,
+            })
+            out.login = { ok: Boolean(nav?.data?.isLogin), name: nav?.data?.uname || '' }
+            return Response.json(out)
+          } catch (err) {
+            return Response.json({ ok: false, error: String(err).slice(0, 200) }, { status: 500 })
+          }
+        },
+      }),
+    )
+
+    writeDiag({
+      at: new Date().toISOString(),
+      stage: 'registered',
+      webServer: true,
+      origin,
+      routes: ['/bili-learn/settings', '/bili-learn/test'],
+    })
+  })
 }
 
 export const inject = ['tools', 'commands']
