@@ -191,7 +191,10 @@ window.__ModuleLoader__.load({
       const [loaded, setLoaded] = useState(false)
       const [loadError, setLoadError] = useState('')
       const [mode, setMode] = useState('auto')
-      const [conc, setConc] = useState(4)
+      const [conc, setConc] = useState(3)
+      const [aMin, setAMin] = useState(2)
+      const [aMax, setAMax] = useState(4)
+      const [aTotal, setATotal] = useState(12)
       const [gap, setGap] = useState(1200)
       const [advanced, setAdvanced] = useState(false)
       const [status, setStatus] = useState('')   // '' | 'saving' | 'saved' | 'error'
@@ -319,7 +322,10 @@ window.__ModuleLoader__.load({
             if (!alive) return
             if (d && d.ok && d.settings) {
               setMode(d.settings.mode || 'auto')
-              setConc(d.settings.concurrency || 4)
+              setConc(d.settings.videoConcurrency ?? 3)
+              setAMin(d.settings.agentsPerVideoMin ?? 2)
+              setAMax(d.settings.agentsPerVideoMax ?? 4)
+              setATotal(d.settings.maxTotalAgents ?? 12)
               setGap(d.settings.gapMs || 1200)
               setEndpoint(d.settings.endpoint || '')
               setDisabled(d.settings.disabledSources || [])
@@ -355,7 +361,10 @@ window.__ModuleLoader__.load({
         try {
           const d = await apiPost('/bili-learn/settings', {
             mode,
-            concurrency: conc,
+            videoConcurrency: conc,
+            agentsPerVideoMin: aMin,
+            agentsPerVideoMax: aMax,
+            maxTotalAgents: aTotal,
             gapMs: gap,
             endpoint,
             disabledSources: disabled,
@@ -537,7 +546,7 @@ window.__ModuleLoader__.load({
         h(Label, null, '同时看几个视频'),
         h(
           'div',
-          { style: { display: 'flex', alignItems: 'center', gap: 10, marginBottom: 20 } },
+          { style: { display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 } },
           h(Button, { onClick: () => { setConc((n) => Math.max(1, n - 1)); setStatus('') }, disabled: conc <= 1 }, '−'),
           h('span', {
             style: {
@@ -546,8 +555,56 @@ window.__ModuleLoader__.load({
             },
           }, String(conc)),
           h(Button, { onClick: () => { setConc((n) => Math.min(12, n + 1)); setStatus('') }, disabled: conc >= 12 }, '+'),
-          h('span', { style: { fontSize: 12, color: V.sub, marginLeft: 4 } }, '个（1 到 12）'),
+          h('span', { style: { fontSize: 12, color: V.sub, marginLeft: 4 } }, '个'),
         ),
+        h('div', { style: { fontSize: 11.5, color: V.sub, lineHeight: 1.6, marginBottom: 20 } },
+          '同时读几个视频，避免只看到一个说法而片面。建议 3 个以上。'),
+
+        h(Label, null, '每个视频分配几个 AI'),
+        h(
+          'div',
+          { style: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 } },
+          h(Button, {
+            onClick: () => { setAMin((n) => Math.max(1, Math.min(n - 1, aMax))); setStatus('') },
+            disabled: aMin <= 1,
+          }, '−'),
+          h('span', {
+            style: { fontFamily: MONO, fontSize: 17, fontWeight: 600, color: V.text, minWidth: 26, textAlign: 'center', fontVariantNumeric: 'tabular-nums' },
+          }, String(aMin)),
+          h(Button, {
+            onClick: () => { setAMin((n) => Math.min(n + 1, aMax)); setStatus('') },
+            disabled: aMin >= aMax,
+          }, '+'),
+          h('span', { style: { fontSize: 12, color: V.sub, margin: '0 4px' } }, '到'),
+          h(Button, {
+            onClick: () => { setAMax((n) => Math.max(n - 1, aMin)); setStatus('') },
+            disabled: aMax <= aMin,
+          }, '−'),
+          h('span', {
+            style: { fontFamily: MONO, fontSize: 17, fontWeight: 600, color: V.text, minWidth: 26, textAlign: 'center', fontVariantNumeric: 'tabular-nums' },
+          }, String(aMax)),
+          h(Button, {
+            onClick: () => { setAMax((n) => Math.min(8, n + 1)); setStatus('') },
+            disabled: aMax >= 8,
+          }, '+'),
+          h('span', { style: { fontSize: 12, color: V.sub, marginLeft: 4 } }, '个'),
+        ),
+        h('div', { style: { fontSize: 11.5, color: V.sub, lineHeight: 1.6, marginBottom: 20 } },
+          '内容越长分配越多（按字幕长度估算），短片取下限。'),
+
+        h(Label, null, 'AI 总数上限'),
+        h(
+          'div',
+          { style: { display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 } },
+          h(Button, { onClick: () => { setATotal((n) => Math.max(1, n - 1)); setStatus('') }, disabled: aTotal <= 1 }, '−'),
+          h('span', {
+            style: { fontFamily: MONO, fontSize: 18, fontWeight: 600, color: V.text, minWidth: 32, textAlign: 'center', fontVariantNumeric: 'tabular-nums' },
+          }, String(aTotal)),
+          h(Button, { onClick: () => { setATotal((n) => Math.min(24, n + 1)); setStatus('') }, disabled: aTotal >= 24 }, '+'),
+          h('span', { style: { fontSize: 12, color: V.sub, marginLeft: 4 } }, '个'),
+        ),
+        h('div', { style: { fontSize: 11.5, color: V.sub, lineHeight: 1.7, marginBottom: 20 } },
+          '短片的 AI 跑完会自动转去帮长片，所以单个视频实际动用的 AI 可能超过上面的区间上限 —— 但同时在跑的总数不会超过这里。'),
 
         // 高级：默认收起，避免小白被「毫秒」吓到
         h(
@@ -717,10 +774,10 @@ window.__ModuleLoader__.load({
                   borderRadius: 6, fontFamily: MONO, fontSize: 11.5,
                   color: V.text, wordBreak: 'break-all',
                 },
-              }, `/bili set mode=${mode} concurrency=${conc} gapMs=${gap}`),
+              }, `/bili set mode=${mode} videos=${conc} agents=${aMin}-${aMax} total=${aTotal} gapMs=${gap}`),
               h(
                 Button,
-                { onClick: () => copyCommand(`/bili set mode=${mode} concurrency=${conc} gapMs=${gap}`) },
+                { onClick: () => copyCommand(`/bili set mode=${mode} videos=${conc} agents=${aMin}-${aMax} total=${aTotal} gapMs=${gap}`) },
                 '复制这条命令',
               ),
               h('div', { style: { color: V.sub, marginTop: 6, fontSize: 11.5 } },

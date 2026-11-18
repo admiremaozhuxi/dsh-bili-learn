@@ -13,7 +13,7 @@
  *    throttled and retried with backoff.
  */
 import { createHash } from 'node:crypto'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import path from 'node:path'
 
@@ -52,6 +52,11 @@ const DEFAULT_SETTINGS = {
   gapMs: 1200,
   disabledSources: [],
   customSources: [],
+  // 阅读编排：同时读几个视频、每个视频分几个 AI（区间）、AI 总数硬上限
+  videoConcurrency: 3,
+  agentsPerVideoMin: 2,
+  agentsPerVideoMax: 4,
+  maxTotalAgents: 12,
 }
 
 /* ------------------------------------------------------------------ settings */
@@ -512,9 +517,99 @@ async function harvest(args, settings) {
   return { ok: true, mode: effective, dir, count: results.length, videos: results, note: notes.join(' ') }
 }
 
-/* --------------------------------------------------------------------- tools */
+/* -------------------------------------------------------------- read plan */
+
+/**
+ * 阅读编排：把每个视频的字幕切成若干块，一个块交给一个子 agent。
+ *
+ * 为什么切成块而不是「一个视频一个 agent」：视频长短差几十倍，一门 55 小时的课
+ * 和一个 3 分钟的视频用同样的算力是浪费。切块之后，短视频的块先被消费完，
+ * 同一个 worker 立刻去取长视频剩下的块 —— 这就是「短电影的 agent 跑完过来帮忙」，
+ * 不需要额外的调度器。
+ *
+ * 单视频的块数在 [min, max] 区间内按时长决定，但总并发永远不超过 maxTotalAgents。
+ */
+function blocksForVideo(subtitleLines, min, max) {
+  const lo = Math.max(1, min)
+  const hi = Math.max(lo, max)
+  if (subtitleLines <= 120) return lo
+  if (subtitleLines <= 300) return Math.min(lo + 1, hi)
+  if (subtitleLines <= 800) return Math.min(lo + 2, hi)
+  return hi
+}
+
+/** 把一个 markdown 按行切成 n 份，各写一个临时文件，保留整体标题做上下文。 */
+async function splitForAgents(file, n, tmpDir) {
+  const text = await readFile(file, 'utf8')
+  const lines = text.split('\n')
+  if (n <= 1 || lines.length < n * 12) {
+    return [{ file, part: 1, total: 1, lineRange: `全部 ${lines.length} 行` }]
+  }
+  const head = lines.slice(0, 6).join('\n') // 标题/UP/播放等
+  const body = lines.slice(6)
+  const size = Math.ceil(body.length / n)
+  const out = []
+  for (let i = 0; i < n; i += 1) {
+    const chunk = body.slice(i * size, (i + 1) * size)
+    if (!chunk.length) break
+    const p = path.join(tmpDir, `${path.basename(file, '.md')}-part${i + 1}.md`)
+    await writeFile(
+      p,
+      `${head}\n\n> 这是全文的第 ${i + 1}/${n} 部分，只负责这一段的提炼。\n\n${chunk.join('\n')}\n`,
+      'utf8',
+    )
+    out.push({
+      file: p,
+      part: i + 1,
+      total: n,
+      lineRange: `第 ${i * size + 1}–${Math.min((i + 1) * size, body.length)} 行`,
+    })
+  }
+  return out
+}
+
+
 
 const textBlock = (text) => [{ type: 'text', text }]
+
+/**
+ * 把一个视频的 markdown 切成 k 段，供 k 个子 agent 分头读。
+ *
+ * 只切「## 字幕」之后的部分，标题和简介每个分段都保留，这样任何一段都能
+ * 独立看懂这是哪个视频。字幕太短时不切（切了每段只剩两三行，没有意义）。
+ */
+function splitSegments(markdown, k) {
+  if (k <= 1) return [String(markdown)]
+  const lines = String(markdown).split('\n')
+  const headEnd = lines.findIndex((l) => /^##\s*字幕/.test(l))
+  const head = headEnd >= 0 ? lines.slice(0, headEnd + 1) : []
+  const body = headEnd >= 0 ? lines.slice(headEnd + 1) : lines
+  if (body.length < k * 4) return [String(markdown)]
+  const per = Math.ceil(body.length / k)
+  const out = []
+  for (let i = 0; i < k; i += 1) {
+    const chunk = body.slice(i * per, (i + 1) * per)
+    if (!chunk.length) break
+    out.push(head.concat(chunk).join('\n'))
+  }
+  return out.length ? out : [String(markdown)]
+}
+
+/**
+ * 这个视频切成几段（= 最多能有几个子 agent 分头读它）。
+ *
+ * min 是保底：短内容也至少 min 份，避免一个 agent 草草看完。
+ * max 是**正常情况下的估算上限**，不是硬上限 —— 内容很长时允许按倍数放大，
+ * 这样别处的 worker 空出来后才能真正过来帮忙。最终同时在跑多少，
+ * 由 maxTotalAgents 这个池子大小约束。
+ */
+function agentsFor(video, min, max) {
+  const lines = Number(video.subtitleLines) || 0
+  if (!lines) return min
+  const want = Math.ceil(lines / 400)
+  const hardCap = Math.max(max, max * 2) // 单个视频最多到估算上限的两倍
+  return Math.max(min, Math.min(want, hardCap))
+}
 
 /** Pull readable text out of whatever a delegated tool result looks like. */
 function resultText(r) {
@@ -551,8 +646,8 @@ function registerTools(ctx) {
         'harvests subtitles and top comments, and writes one readable markdown file per video. ' +
         'Returns a compact index with absolute file paths. Call it when the user asks to learn how ' +
         'something is done from Bilibili, or wants Bilibili used as a research source. After it ' +
-        'returns, read those files in parallel — one subagent per file, up to the configured ' +
-        'concurrency — merge what they learned, then do the actual task. ' +
+        'returns, read those files in parallel — each video gets several subagents proportional to its length, ' +
+        'and the total number running at once is capped — merge what they learned, then do the actual task. ' +
         'Subtitles and comment pages beyond a preview need a login cookie.',
       parameters: {
         type: 'object',
@@ -658,59 +753,115 @@ function registerTools(ctx) {
         if (!r.ok) return r
 
         const focus = String(args.focus || '核心观点、可复用的具体做法与步骤、踩坑与注意事项、与本主题最相关的结论').trim()
-        const limit = Math.min(Math.max(Number(settings.concurrency) || 4, 1), 12)
-        const targets = r.videos.slice(0, Math.max(limit, 1))
 
-        // Dispatch one reader per video. Any failure degrades instead of aborting.
-        const dispatched = []
+        const clampN = (v, lo, hi, dflt) => {
+          const n = Number(v)
+          return Number.isFinite(n) ? Math.min(Math.max(Math.round(n), lo), hi) : dflt
+        }
+        const videosAtOnce = clampN(settings.videoConcurrency ?? settings.concurrency, 1, 12, 3)
+        const aMin = clampN(settings.agentsPerVideoMin, 1, 8, 2)
+        const aMax = Math.max(aMin, clampN(settings.agentsPerVideoMax, 1, 8, 4))
+        const pool = clampN(settings.maxTotalAgents, 1, 24, 12)
+
+        const targets = r.videos.slice(0, videosAtOnce)
+
+        // 每个视频按内容量分配若干子 agent，各自读一段。
+        // 全部段落进同一个队列，由固定大小的池消费 —— 短片读完它的段落，
+        // 那些 worker 立刻接手长片剩下的段落，所以单个视频可以超过 aMax，
+        // 但同时在跑的子 agent 数始终不超过 pool。
+        const tasks = []
+        for (const v of targets) {
+          const k = agentsFor(v, aMin, aMax)
+          let text = ''
+          try {
+            text = await readFile(v.file, 'utf8')
+          } catch {
+            text = ''
+          }
+          const segs = text ? splitSegments(text, k) : [null]
+          segs.forEach((seg, i) => {
+            tasks.push({ v, seg, idx: i + 1, total: segs.length })
+          })
+        }
+
+        const collected = []
         let degraded = false
         let degradeReason = ''
         if (!exec?.agent) {
           degraded = true
           degradeReason = '当前调用没有 agent 上下文，无法派发子 agent。'
         } else {
-          for (const v of targets) {
-            const prompt =
-              `阅读文件：${v.file}\n\n` +
-              `这是一个 B 站视频的完整记录（标题、简介、字幕、高赞评论）。主题：${args.topic}。\n\n` +
-              `请只做提炼，不要复述原文：\n1) 核心观点\n2) 可复用的具体做法 / 步骤 / 命令 / 参数\n` +
-              `3) 踩坑与注意事项\n4) 最值得转述的 3 条结论\n\n重点：${focus}。\n` +
-              `输出 markdown，400 字以内。信息不足就直说，不要编。`
-            try {
-              const batch = await ctx.tools.execute({
-                calls: [
-                  {
-                    type: 'tool-call',
-                    id: `bili-study-${v.bvid}`,
-                    name: 'subagent',
-                    arguments: JSON.stringify({
-                      description: `研读 ${v.bvid}`,
-                      prompt,
-                    }),
-                  },
-                ],
-                signal: exec.signal,
-                agent: exec.agent,
-              })
-              const first = batch?.results?.[0]
-              const text = resultText(first)
-              if (first?.isError || !text.trim()) {
+          let cursor = 0
+          const runners = Array.from({ length: Math.max(1, Math.min(pool, tasks.length)) }, async () => {
+            for (;;) {
+              const mine = cursor
+              cursor += 1
+              if (mine >= tasks.length) return
+              const t = tasks[mine]
+              const segNote =
+                t.total > 1
+                  ? `\n\n注意：这是同一个视频的第 ${t.idx}/${t.total} 段，只提炼这一段里出现的内容，不要补别的段。`
+                  : ''
+              const prompt =
+                `阅读文件：${t.v.file}\n\n` +
+                `这是一个 B 站视频的记录（标题、简介、字幕、高赞评论）。主题：${args.topic}。${segNote}\n\n` +
+                `请只做提炼，不要复述原文：\n1) 核心观点\n2) 可复用的具体做法 / 步骤 / 命令 / 参数\n` +
+                `3) 踩坑与注意事项\n4) 最值得转述的结论\n\n重点：${focus}。\n` +
+                `输出 markdown，400 字以内。信息不足就直说，不要编。`
+              try {
+                const batch = await ctx.tools.execute({
+                  calls: [
+                    {
+                      type: 'tool-call',
+                      id: `bili-study-${t.v.bvid}-${t.idx}`,
+                      name: 'subagent',
+                      arguments: JSON.stringify({
+                        description: `研读 ${t.v.bvid}${t.total > 1 ? ` 第${t.idx}段` : ''}`,
+                        prompt,
+                      }),
+                    },
+                  ],
+                  signal: exec.signal,
+                  agent: exec.agent,
+                })
+                const first = batch?.results?.[0]
+                const text = resultText(first)
+                if (first?.isError || !text.trim()) {
+                  degraded = true
+                  degradeReason = '有子 agent 返回空结果或被拒绝。'
+                  continue
+                }
+                collected.push({ bvid: t.v.bvid, title: t.v.title, idx: t.idx, read: text })
+              } catch (err) {
                 degraded = true
-                degradeReason = '子 agent 返回空结果或被拒绝。'
-                continue
+                degradeReason = `子 agent 派发失败：${String(err).slice(0, 160)}`
               }
-              dispatched.push({ bvid: v.bvid, title: v.title, read: text })
-            } catch (err) {
-              degraded = true
-              degradeReason = `子 agent 派发失败：${String(err).slice(0, 160)}`
-              break
             }
-          }
+          })
+          await Promise.all(runners)
         }
+
+        // 合并：同一个视频的多个段落按顺序拼回去
+        const grouped = new Map()
+        for (const c of collected.sort((a, b) => a.idx - b.idx)) {
+          if (!grouped.has(c.bvid)) grouped.set(c.bvid, { title: c.title, segs: [] })
+          grouped.get(c.bvid).segs.push(c.read.trim())
+        }
+        const dispatched = [...grouped.entries()].map(([bvid, o]) => ({
+          bvid,
+          title: o.title,
+          read: o.segs.join('\n\n'),
+          segments: o.segs.length,
+        }))
 
         const parts = []
         for (const d of dispatched) {
-          parts.push(`## ${d.title}（${d.bvid}）`, '', d.read.trim(), '')
+          parts.push(
+            `## ${d.title}（${d.bvid}）${d.segments > 1 ? ` · ${d.segments} 段` : ''}`,
+            '',
+            d.read.trim(),
+            '',
+          )
         }
         const brief = parts.length
           ? parts.join('\n')
@@ -738,8 +889,9 @@ function registerTools(ctx) {
     ctx.tools.register({
       name: 'bili_config',
       description:
-        'Read or change the Bilibili learner settings: fetch mode, concurrency, self-hosted endpoint, ' +
-        'login cookie, and third-party pool. Call with no arguments to read the current settings.',
+        'Read or change the Bilibili learner settings: fetch mode, how many videos to read at once, how many ' +
+        'subagents each video gets, the total subagent cap, self-hosted endpoint, login cookie, and third-party ' +
+        'pool. Call with no arguments to read the current settings.',
       parameters: {
         type: 'object',
         properties: {
@@ -748,7 +900,23 @@ function registerTools(ctx) {
             enum: ['default', 'direct', 'self', 'proxy', 'auto'],
             description: 'Fetch strategy.',
           },
-          concurrency: { type: 'integer', description: 'How many videos subagents may study at once. 1-12.' },
+          videoConcurrency: {
+            type: 'integer',
+            description: '同时阅读几个视频。1-12，建议 3 以上以免只看一个来源而片面。',
+          },
+          agentsPerVideoMin: {
+            type: 'integer',
+            description: '每个视频至少分配几个子 agent。1-8。',
+          },
+          agentsPerVideoMax: {
+            type: 'integer',
+            description:
+              '每个视频正常情况下分配几个子 agent（内容长时会超过它，靠别人的空闲 worker 补）。1-8。',
+          },
+          maxTotalAgents: {
+            type: 'integer',
+            description: '子 agent 总数硬上限。同时在跑的数量不超过它。1-24。',
+          },
           endpoint: { type: 'string', description: 'Self-hosted parse service base URL.' },
           cookie: { type: 'string', description: 'Bilibili login cookie, normally the SESSDATA pair.' },
           proxies: { type: 'array', items: { type: 'string' }, description: 'Third-party parser base URLs.' },
@@ -760,7 +928,10 @@ function registerTools(ctx) {
           type: 'object',
           properties: {
             mode: { type: 'string' },
-            concurrency: { type: 'integer' },
+            videoConcurrency: { type: 'integer' },
+            agentsPerVideoMin: { type: 'integer' },
+            agentsPerVideoMax: { type: 'integer' },
+            maxTotalAgents: { type: 'integer' },
             endpoint: { type: 'string' },
             cookieSet: { type: 'boolean' },
             proxies: { type: 'array', items: { type: 'string' } },
@@ -771,7 +942,9 @@ function registerTools(ctx) {
           return textBlock(
             [
               `取数方式：${value.mode}`,
-              `并行度：${value.concurrency}`,
+              `同时阅读视频数：${value.videoConcurrency}`,
+              `每个视频分配 AI：${value.agentsPerVideoMin}-${value.agentsPerVideoMax} 个（长的会超过，靠空闲的补）`,
+              `AI 总数上限：${value.maxTotalAgents}`,
               `自建服务器：${value.endpoint}`,
               `登录凭证：${value.cookieSet ? '已配置' : '未配置（字幕为空）'}`,
               `第三方池：${(value.proxies || []).length ? value.proxies.join(', ') : '（空）'}`,
@@ -783,14 +956,33 @@ function registerTools(ctx) {
       async execute(args) {
         const patch = {}
         if (args.mode) patch.mode = args.mode
-        if (args.concurrency) patch.concurrency = Math.min(Math.max(Number(args.concurrency), 1), 12)
+        if (args.videoConcurrency) {
+          patch.videoConcurrency = Math.min(Math.max(Number(args.videoConcurrency), 1), 12)
+        }
+        if (args.agentsPerVideoMin) {
+          patch.agentsPerVideoMin = Math.min(Math.max(Number(args.agentsPerVideoMin), 1), 8)
+        }
+        if (args.agentsPerVideoMax) {
+          patch.agentsPerVideoMax = Math.min(Math.max(Number(args.agentsPerVideoMax), 1), 8)
+        }
+        if (args.maxTotalAgents) {
+          patch.maxTotalAgents = Math.min(Math.max(Number(args.maxTotalAgents), 1), 24)
+        }
+        if (patch.agentsPerVideoMin && patch.agentsPerVideoMax && patch.agentsPerVideoMin > patch.agentsPerVideoMax) {
+          const lo = patch.agentsPerVideoMin
+          patch.agentsPerVideoMin = patch.agentsPerVideoMax
+          patch.agentsPerVideoMax = lo
+        }
         if (typeof args.endpoint === 'string') patch.endpoint = args.endpoint
         if (typeof args.cookie === 'string') patch.cookie = args.cookie
         if (Array.isArray(args.proxies)) patch.proxies = args.proxies
         const s = Object.keys(patch).length ? await saveSettings(patch) : await loadSettings()
         return {
           mode: s.mode,
-          concurrency: s.concurrency,
+          videoConcurrency: s.videoConcurrency ?? s.concurrency ?? 3,
+          agentsPerVideoMin: s.agentsPerVideoMin ?? 2,
+          agentsPerVideoMax: s.agentsPerVideoMax ?? 4,
+          maxTotalAgents: s.maxTotalAgents ?? 12,
           endpoint: s.endpoint,
           cookieSet: Boolean(s.cookie),
           proxies: s.proxies || [],
@@ -1394,7 +1586,7 @@ function registerCommands(ctx) {
     ctx.commands.register({
       name: 'bili',
       description: 'B站学习器：查看或修改取数方式、并发、自建服务器、登录态',
-      input: { hint: 'mode auto | concurrency 6 | endpoint URL | test | status' },
+      input: { hint: 'mode auto | videos 3 | agents 2-4 | total 12 | endpoint URL | test | status' },
       async handler(inv) {
         const raw = String(inv.rawInput || '').trim()
         const parts = raw.split(/\s+/).filter(Boolean)
@@ -1407,7 +1599,9 @@ function registerCommands(ctx) {
             return {
               kind: 'success',
               text:
-                `取数方式 ${s.mode} · 并发 ${s.concurrency} · 间隔 ${s.gapMs}ms\n` +
+                `取数方式 ${s.mode} · 同时读 ${s.videoConcurrency ?? s.concurrency ?? 3} 个视频` +
+                ` · 每片 ${s.agentsPerVideoMin ?? 2}-${s.agentsPerVideoMax ?? 4} 个AI` +
+                ` · 总数上限 ${s.maxTotalAgents ?? 12} · 间隔 ${s.gapMs}ms\n` +
                 `自建服务器 ${s.endpoint || '（未设置）'}\n` +
                 `登录凭证 ${s.cookie ? '已配置' : '未配置'}\n` +
                 `配置文件 ${SETTINGS_FILE}`,
@@ -1423,13 +1617,40 @@ function registerCommands(ctx) {
             return { kind: 'success', text: `取数方式已设为 ${arg}` }
           }
 
-          if (verb === 'concurrency') {
+          if (verb === 'videos' || verb === 'concurrency') {
             const n = Number(arg)
             if (!Number.isFinite(n) || n < 1 || n > 12) {
-              return { kind: 'error', text: '并发数必须是 1 到 12 之间的整数' }
+              return { kind: 'error', text: '同时阅读视频数必须是 1 到 12 之间的整数' }
             }
-            await saveSettings({ concurrency: Math.round(n) })
-            return { kind: 'success', text: `并发已设为 ${Math.round(n)}` }
+            await saveSettings({ videoConcurrency: Math.round(n) })
+            return { kind: 'success', text: `同时阅读 ${Math.round(n)} 个视频` }
+          }
+
+          if (verb === 'agents') {
+            // agents 2-4  或  agents 2
+            const mm = String(arg).match(/^(\d+)(?:[-~](\d+))?$/)
+            if (!mm) {
+              return { kind: 'error', text: '写法是 agents 2-4（下限-上限），或 agents 3 表示上下限相同' }
+            }
+            const lo = Math.round(Number(mm[1]))
+            const hi = Math.round(Number(mm[2] || mm[1]))
+            if (lo < 1 || hi > 8 || lo > hi) {
+              return { kind: 'error', text: '区间要在 1 到 8 之间，且下限不大于上限' }
+            }
+            await saveSettings({ agentsPerVideoMin: lo, agentsPerVideoMax: hi })
+            return {
+              kind: 'success',
+              text: `每个视频分配 ${lo}-${hi} 个 AI（内容长的会超过上限，靠空闲的补）`,
+            }
+          }
+
+          if (verb === 'total') {
+            const n = Number(arg)
+            if (!Number.isFinite(n) || n < 1 || n > 24) {
+              return { kind: 'error', text: 'AI 总数上限必须是 1 到 24 之间的整数' }
+            }
+            await saveSettings({ maxTotalAgents: Math.round(n) })
+            return { kind: 'success', text: `AI 总数上限 ${Math.round(n)}` }
           }
 
           if (verb === 'endpoint') {
@@ -1501,10 +1722,24 @@ function registerCommands(ctx) {
               if (k === 'mode') {
                 if (['default', 'direct', 'self', 'proxy', 'auto'].includes(v)) patch.mode = v
                 else bad.push(`mode=${v}`)
-              } else if (k === 'concurrency') {
+              } else if (k === 'videos' || k === 'concurrency') {
                 const n = Number(v)
-                if (Number.isFinite(n) && n >= 1 && n <= 12) patch.concurrency = Math.round(n)
-                else bad.push(`concurrency=${v}`)
+                if (Number.isFinite(n) && n >= 1 && n <= 12) patch.videoConcurrency = Math.round(n)
+                else bad.push(`videos=${v}`)
+              } else if (k === 'agents') {
+                const mm = String(v).match(/^(\d+)(?:[-~](\d+))?$/)
+                if (mm) {
+                  const lo = Math.round(Number(mm[1]))
+                  const hi = Math.round(Number(mm[2] || mm[1]))
+                  if (lo >= 1 && hi <= 8 && lo <= hi) {
+                    patch.agentsPerVideoMin = lo
+                    patch.agentsPerVideoMax = hi
+                  } else bad.push(`agents=${v}`)
+                } else bad.push(`agents=${v}`)
+              } else if (k === 'total') {
+                const n = Number(v)
+                if (Number.isFinite(n) && n >= 1 && n <= 24) patch.maxTotalAgents = Math.round(n)
+                else bad.push(`total=${v}`)
               } else if (k === 'gap') {
                 const n = Number(v)
                 if (Number.isFinite(n) && n >= 300 && n <= 5000) patch.gapMs = Math.round(n)
@@ -1526,7 +1761,9 @@ function registerCommands(ctx) {
               kind: 'success',
               text:
                 `已应用：${Object.keys(patch).join(', ')}\n` +
-                `当前 取数方式 ${s2.mode} · 并发 ${s2.concurrency} · 间隔 ${s2.gapMs}ms · 服务器 ${s2.endpoint || '未设置'}`,
+                `当前 取数方式 ${s2.mode} · 同时读 ${s2.videoConcurrency ?? s2.concurrency ?? 3} 个 · ` +
+                  `每片 ${s2.agentsPerVideoMin ?? 2}-${s2.agentsPerVideoMax ?? 4} 个AI · ` +
+                  `总数上限 ${s2.maxTotalAgents ?? 12} · 间隔 ${s2.gapMs}ms`,
             }
           }
 
@@ -1537,7 +1774,7 @@ function registerCommands(ctx) {
 
           return {
             kind: 'error',
-            text: `未知子命令 ${verb}。可用：status / mode / concurrency / endpoint / gap / cookie / clearcookie / test / reset`,
+            text: `未知子命令 ${verb}。可用：status / mode / videos / agents / total / endpoint / gap / cookie / clearcookie / test / reset`,
           }
         } catch (err) {
           return { kind: 'error', text: `执行失败：${String(err).slice(0, 200)}` }
@@ -1570,7 +1807,10 @@ function registerHttpApi(ctx) {
 
   const view = (s) => ({
     mode: s.mode,
-    concurrency: s.concurrency,
+    videoConcurrency: s.videoConcurrency ?? s.concurrency ?? 3,
+    agentsPerVideoMin: s.agentsPerVideoMin ?? 2,
+    agentsPerVideoMax: s.agentsPerVideoMax ?? 4,
+    maxTotalAgents: s.maxTotalAgents ?? 12,
     gapMs: s.gapMs,
     endpoint: s.endpoint || '',
     hasCookie: Boolean(s.cookie),
@@ -1628,9 +1868,30 @@ function registerHttpApi(ctx) {
                 ) {
                   cleanPatch.mode = patch.mode
                 }
-                const conc = Number(patch.concurrency)
+                const conc = Number(patch.videoConcurrency)
                 if (Number.isFinite(conc)) {
-                  cleanPatch.concurrency = Math.min(Math.max(Math.round(conc), 1), 12)
+                  cleanPatch.videoConcurrency = Math.min(Math.max(Math.round(conc), 1), 12)
+                }
+                const aMin = Number(patch.agentsPerVideoMin)
+                if (Number.isFinite(aMin)) {
+                  cleanPatch.agentsPerVideoMin = Math.min(Math.max(Math.round(aMin), 1), 8)
+                }
+                const aMax = Number(patch.agentsPerVideoMax)
+                if (Number.isFinite(aMax)) {
+                  cleanPatch.agentsPerVideoMax = Math.min(Math.max(Math.round(aMax), 1), 8)
+                }
+                const aTot = Number(patch.maxTotalAgents)
+                if (Number.isFinite(aTot)) {
+                  cleanPatch.maxTotalAgents = Math.min(Math.max(Math.round(aTot), 1), 24)
+                }
+                // 区间要自洽：min 不得大于 max
+                if (cleanPatch.agentsPerVideoMin !== undefined || cleanPatch.agentsPerVideoMax !== undefined) {
+                  const lo = cleanPatch.agentsPerVideoMin ?? 2
+                  const hi = cleanPatch.agentsPerVideoMax ?? 4
+                  if (lo > hi) {
+                    cleanPatch.agentsPerVideoMin = hi
+                    cleanPatch.agentsPerVideoMax = lo
+                  }
                 }
                 const gap = Number(patch.gapMs)
                 if (Number.isFinite(gap)) {
@@ -1785,7 +2046,7 @@ function registerHttpApi(ctx) {
         const res = await fetch(`${origin}/bili-learn/settings`, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ concurrency: before.concurrency || 4 }),
+          body: JSON.stringify({ videoConcurrency: before.videoConcurrency ?? 3 }),
         })
         const body = await res.json().catch(() => ({}))
         out.postStatus = res.status
