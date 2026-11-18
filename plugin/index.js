@@ -212,14 +212,27 @@ async function getCid(bvid, opts) {
  */
 async function getParts(bvid, opts) {
   const d = await getJson(`${API}/x/player/pagelist?bvid=${bvid}`, opts)
-  if (d.code !== 0) return null
-  return (d.data || []).map((p) => ({
-    page: Number(p.page) || 0,
-    cid: p.cid,
-    title: String(p.part || '').trim(),
-    duration: Number(p.duration) || 0,
-    cover: p.first_frame || '',
-  }))
+  if (d.code !== 0) {
+    const why =
+      d.code === -404
+        ? '视频不存在或已删除'
+        : d.code === -400
+          ? 'BV 号格式不对'
+          : d.code === -412 || d._html
+            ? '被风控拦了，等几分钟再试'
+            : `接口返回 ${d.code}${d.message ? '：' + d.message : ''}`
+    return { parts: null, error: why }
+  }
+  return {
+    parts: (d.data || []).map((p) => ({
+      page: Number(p.page) || 0,
+      cid: p.cid,
+      title: String(p.part || '').trim(),
+      duration: Number(p.duration) || 0,
+      cover: p.first_frame || '',
+    })),
+    error: '',
+  }
 }
 
 /** UP 主资料：粉丝数只能从 relation/stat 拿，acc/info 已经不返回 fans。 */
@@ -855,24 +868,32 @@ function registerTools(ctx) {
         }
         // 分P：一集课程就是多个 P，只取第一个等于读错了集
         const wantPage = Math.max(1, Number(args.p) || 1)
-        const parts = await getParts(bvid, opts)
-        if (!parts || !parts.length) {
-          return { ok: false, bvid, subtitleTrace: 'pagelist failed', subtitleLines: 0, comments: 0 }
+        const grabbed = await getParts(bvid, opts)
+        if (!grabbed.parts || !grabbed.parts.length) {
+          return {
+            ok: false,
+            bvid,
+            subtitleTrace: grabbed.error || '取不到分P清单',
+            subtitleLines: 0,
+            comments: 0,
+          }
         }
-        const target = parts.find((x) => x.page === wantPage) || parts[0]
+        const target = grabbed.parts.find((x) => x.page === wantPage) || grabbed.parts[0]
 
         // 评论要 aid；整条视频共用同一个 aid，与第几 P 无关
         const meta = await getViewMeta(bvid, opts)
         const subs = await getSubtitles(bvid, target.cid, opts)
         const aid = meta?.aid || args.aid
+        // 翻几页就该给几页的量：只说 commentPages 而没说 commentLimit 时，
+        // 上限按页数放大，否则「翻 2 页」会莫名其妙只拿到 20 条。
+        const cPages = Math.min(Math.max(Number(args.commentPages) || 1, 1), 5)
+        const cLimit = Math.min(Math.max(Number(args.commentLimit) || cPages * 20, 1), 100)
+
         const comments =
           args.withComments === false
             ? { items: [], trace: 'skipped', pages: 0 }
             : aid
-              ? await getComments(aid, opts, {
-                  limit: Math.min(Math.max(Number(args.commentLimit) || 20, 1), 100),
-                  maxPages: Math.min(Math.max(Number(args.commentPages) || 1, 1), 5),
-                })
+              ? await getComments(aid, opts, { limit: cLimit, maxPages: cPages })
               : { items: [], trace: 'no_aid（登录后可得）', pages: 0 }
 
         // 二级评论：只对前几条有回复的主评论取，避免请求爆炸
@@ -1140,10 +1161,17 @@ function registerTools(ctx) {
           return { ok: false, bvid, note: 'invalid bvid', parts: [], partCount: 0 }
         }
 
-        const parts = await getParts(bvid, opts)
-        if (!parts || !parts.length) {
-          return { ok: false, bvid, note: '取不到分P清单', parts: [], partCount: 0 }
+        const grabbed = await getParts(bvid, opts)
+        if (!grabbed.parts || !grabbed.parts.length) {
+          return {
+            ok: false,
+            bvid,
+            note: grabbed.error || '取不到分P清单',
+            parts: [],
+            partCount: 0,
+          }
         }
+        const parts = grabbed.parts
 
         const meta = await getViewMeta(bvid, opts)
         const owner = { name: meta?.owner || '', mid: meta?.ownerMid || 0, follower: 0 }
