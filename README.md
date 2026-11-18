@@ -47,7 +47,7 @@ agent 会调用 `bili_learn` 或 `bili_study`，按播放量抓一批高相关�
 
 ## 安装
 
-### 插件
+**只需要两步，不用装 Python，不用装 ffmpeg，不用开开发者工具。**
 
 ```bash
 git clone https://github.com/admiremaozhuxi/dsh-bili-learn.git
@@ -55,32 +55,27 @@ git clone https://github.com/admiremaozhuxi/dsh-bili-learn.git
 
 然后在 DSH 里：**Plugins → Add plugin**，选择 `plugin/` 目录。
 
-或命令行方式（把路径换成你的）：
+装好后：
 
-```bash
-dsh plugin --profile desktop add /absolute/path/to/dsh-bili-learn/plugin
-```
+1. 左侧栏出现「B站学习器」
+2. 点开 →「扫码登录 B 站」→ 手机 App 扫一下
+3. 直接对 DSH 说「学习B站上××，帮我做××」
 
-装好后左侧栏会出现「B站学习器」图标。
+首次「看画面」时，插件会自己下载一个 ffmpeg（约 28 MB，走国内镜像约 5 秒），装在 `~/.dsh-bili-learn/bin/`，之后不再下。
 
-### 采集器（可选，独立使用）
+### 这些都不需要你做
 
-```bash
-cd tools
-python3 harvest.py --mode meta --source ranking --pages 6   # 只抓元数据，几乎不耗配额
-python3 harvest.py --mode full --source popular --pages 2 --limit 50   # 元数据+字幕+评论
-```
+| 以前要装 | 现在 |
+|---|---|
+| Python 3 + 4 个 pip 包 | ❌ 不需要，全部改写成 Node |
+| ffmpeg | ❌ 不需要，插件自动准备 |
+| 手动复制脚本到某个目录 | ❌ 不需要，插件自带 |
+| F12 复制 SESSDATA | ❌ 不需要，面板扫码 |
 
-产物在 `~/.dsh-bili-learn/harvests/<时间>-<主题>/`。
+### tools/ 里的 Python 是什么
 
-### 自建解析服务（可选）
+给喜欢命令行的人用的可选件，功能与插件重复。**不装它们，插件功能完全一样。**
 
-```bash
-python3 parse_svc.py --port 8848 --gap 1.5
-curl "http://127.0.0.1:8848/playurl?bvid=BV1xx&cid=123"
-```
-
-把一台服务器变成解析源：`/playurl` 返回音频轨与视频轨直链，`/subtitle` 返回字幕轨。
 
 ### 第二数据源（可选）
 

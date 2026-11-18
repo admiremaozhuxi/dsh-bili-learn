@@ -19,6 +19,10 @@ import { homedir } from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
 
+import { ensureFfmpeg } from './lib/ffmpeg.js'
+import { pollQrLogin, startQrLogin } from './lib/login.js'
+import { readFrames } from './lib/media.js'
+
 const run = promisify(execFile)
 
 const API = 'https://api.bilibili.com'
@@ -200,7 +204,7 @@ async function getCid(bvid, opts) {
   const d = await getJson(`${API}/x/player/pagelist?bvid=${bvid}`, opts)
   if (d.code !== 0) return null
   const first = (d.data || [])[0]
-  return first ? { cid: first.cid, parts: (d.data || []).length } : null
+  return first ? { cid: first.cid, parts: (d.data || []).length, duration: Number(first.duration) || 0 } : null
 }
 
 async function getSubtitles(bvid, cid, opts) {
@@ -825,45 +829,29 @@ function registerTools(ctx) {
         if (!/^BV[0-9A-Za-z]+$/.test(bvid)) {
           return { ok: false, bvid, note: 'invalid bvid', frames: 0, markdown: '' }
         }
-        const script =
-          s.framesScript || path.join(homedir(), '.dsh-bili-learn', 'tools', 'video_frames.py')
-        const python = s.pythonPath || (process.platform === 'win32' ? 'python' : 'python3')
-        const n = Math.min(Math.max(Number(args.maxFrames) || 8, 1), 16)
-        const argv = [script, '--bvid', bvid, '--max-frames', String(n)]
-        if (args.interval) argv.push('--interval', String(Math.max(1, Number(args.interval))))
-        if (args.prompt) argv.push('--prompt', String(args.prompt))
-
+        const meta = await getCid(bvid, { cookie: s.cookie || '', gapMs: 400 })
+        if (!meta?.cid) {
+          return { ok: false, bvid, note: '取不到 cid，可能视频不存在或接口被拦', frames: 0, markdown: '' }
+        }
+        let ff
         try {
-          const { stdout, stderr } = await run(python, argv, {
-            timeout: 600000,
-            maxBuffer: 16 * 1024 * 1024,
-            windowsHide: true,
-          })
-          const frames = (stdout.match(/^### \[/gm) || []).length
-          return {
-            ok: true,
-            bvid,
-            frames,
-            markdown: String(stdout).trim(),
-            log: String(stderr || '')
-              .split('\n')
-              .filter((l) => l.startsWith('[i]') || l.startsWith('[✓]'))
-              .slice(-6)
-              .join('\n'),
-          }
+          ff = await ensureFfmpeg()
         } catch (err) {
-          const out = String(err?.stdout || '').trim()
           return {
             ok: false,
             bvid,
             frames: 0,
-            markdown: out,
-            note:
-              `抽帧脚本执行失败：${String(err?.message || err).slice(0, 200)}。` +
-              `脚本路径 ${script}，解释器 ${python}。` +
-              '需要 Python 侧装有 imageio-ffmpeg 与 Pillow，且脚本已复制到该路径。',
+            markdown: '',
+            note: `需要 ffmpeg 但没准备好：${String(err).slice(0, 200)}`,
           }
         }
+        const r = await readFrames(bvid, meta.cid, meta.duration, s, {
+          maxFrames: args.maxFrames,
+          interval: args.interval,
+          prompt: args.prompt,
+          ffmpegPath: ff.path,
+        })
+        return { ...r, bvid, ffmpeg: ff.path, ffmpegDownloaded: ff.downloaded }
       },
     }),
   )
@@ -1318,12 +1306,55 @@ function registerHttpApi(ctx) {
       }),
     )
 
+    c.effect(() =>
+      c.webServer.register({
+        kind: 'exact',
+        path: '/bili-learn/qr',
+        resource: async () => {
+          try {
+            const qr = await startQrLogin()
+            return Response.json({ ok: true, key: qr.key, svg: qr.svg })
+          } catch (err) {
+            return Response.json({ ok: false, error: String(err).slice(0, 200) })
+          }
+        },
+      }),
+    )
+
+    c.effect(() =>
+      c.webServer.register({
+        kind: 'exact',
+        path: '/bili-learn/qr/poll',
+        resource: async (request) => {
+          try {
+            const u = new URL(request.url, 'http://127.0.0.1')
+            const key = u.searchParams.get('key') || ''
+            if (!key) return Response.json({ ok: false, error: '缺少 key' }, { status: 400 })
+            const r = await pollQrLogin(key)
+            if (r.state === 'success') {
+              await saveSettings({ cookie: r.cookie })
+              return Response.json({ ok: true, state: 'success', message: '登录成功，已保存' })
+            }
+            return Response.json({ ok: true, state: r.state, message: r.message })
+          } catch (err) {
+            return Response.json({ ok: false, error: String(err).slice(0, 200) })
+          }
+        },
+      }),
+    )
+
     writeDiag({
       at: new Date().toISOString(),
       stage: 'registered',
       webServer: true,
       origin,
-      routes: ['/bili-learn/settings', '/bili-learn/test', '/bili-learn/sources'],
+      routes: [
+        '/bili-learn/settings',
+        '/bili-learn/test',
+        '/bili-learn/sources',
+        '/bili-learn/qr',
+        '/bili-learn/qr/poll',
+      ],
     })
   })
 }

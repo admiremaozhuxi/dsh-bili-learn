@@ -174,6 +174,57 @@ window.__ModuleLoader__.load({
       const [copied, setCopied] = useState('')
       const [sources, setSources] = useState(null)
       const [probing, setProbing] = useState(false)
+      const [qr, setQr] = useState(null)
+      const [qrMsg, setQrMsg] = useState('')
+      const [qrBusy, setQrBusy] = useState(false)
+
+      const beginQr = async () => {
+        if (qrBusy) return
+        setQrBusy(true)
+        setQrMsg('')
+        try {
+          const d = await apiGet('/bili-learn/qr')
+          if (!d.ok) {
+            setQrMsg(d.error || '生成二维码失败')
+            setQrBusy(false)
+            return
+          }
+          setQr({ key: d.key, svg: d.svg })
+          setQrMsg('用 B 站 App 扫上面这张码，扫完在手机上点确认')
+          const key = d.key
+          let tries = 0
+          const tick = async () => {
+            tries += 1
+            if (tries > 90) {
+              setQrBusy(false)
+              setQrMsg('等太久了，重新点一次')
+              return
+            }
+            try {
+              const p = await apiGet('/bili-learn/qr/poll?key=' + encodeURIComponent(key))
+              if (p.state === 'success') {
+                setQr(null)
+                setQrMsg('登录成功 ✓')
+                setQrBusy(false)
+                return
+              }
+              if (p.state === 'expired' || p.state === 'error') {
+                setQrBusy(false)
+                setQrMsg(p.message || '二维码失效了，重新点一次')
+                return
+              }
+              if (p.message) setQrMsg(p.message)
+            } catch (err) {
+              /* 单次失败不算结束，继续试 */
+            }
+            setTimeout(tick, 2000)
+          }
+          setTimeout(tick, 1500)
+        } catch (err) {
+          setQrMsg(String(err.message || err))
+          setQrBusy(false)
+        }
+      }
 
       const loadSources = async (refresh) => {
         setProbing(true)
@@ -268,6 +319,43 @@ window.__ModuleLoader__.load({
       const settingsView = h(
         'div',
         null,
+        h(Label, null, 'B 站登录'),
+        h(
+          'div',
+          {
+            style: {
+              background: V.card, border: `1px solid ${V.line}`, borderRadius: 8,
+              padding: '12px 14px', marginBottom: 20,
+            },
+          },
+          qr
+            ? h(
+                'div',
+                { style: { display: 'flex', gap: 16, alignItems: 'flex-start' } },
+                h('div', {
+                  style: { background: '#fff', padding: 6, borderRadius: 6, lineHeight: 0 },
+                  dangerouslySetInnerHTML: { __html: qr.svg },
+                }),
+                h('div', { style: { flex: 1, minWidth: 0 } },
+                  h('div', { style: { fontSize: 13, color: V.text, marginBottom: 4 } }, '扫码登录'),
+                  h('div', { style: { fontSize: 12, color: V.sub, lineHeight: 1.7 } }, qrMsg || '等待扫码…'),
+                  h('div', { style: { marginTop: 8 } },
+                    h(Button, { onClick: beginQr, disabled: qrBusy }, '换一张')),
+                ),
+              )
+            : h(
+                'div',
+                null,
+                h('div', { style: { fontSize: 12.5, color: V.sub, lineHeight: 1.7, marginBottom: 9 } },
+                  '字幕和完整评论区都需要登录。扫码即可，不用输密码，也不用开开发者工具。'),
+                h('div', { style: { display: 'flex', alignItems: 'center', gap: 10 } },
+                  h(Button, { primary: true, onClick: beginQr, disabled: qrBusy },
+                    qrBusy ? '等待扫码…' : '扫码登录 B 站'),
+                  qrMsg ? h('span', { style: { fontSize: 12, color: qrMsg.includes('成功') ? V.ok : V.warn } }, qrMsg) : null,
+                ),
+              ),
+        ),
+
         h(Label, null, '怎么获取视频内容'),
         h(
           'div',
