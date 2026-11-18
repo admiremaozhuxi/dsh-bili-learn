@@ -790,6 +790,26 @@ function registerTools(ctx) {
   registerSources(ctx, deps)
 }
 
+/**
+ * 内置来源清单。
+ * 这一块在 Phase 2 拆分时被误删过——它原本紧跟在工具注册块之后，
+ * 而拆分脚本按「下一个顶层 function」划定范围，把它一起切走了。
+ * 表现是 bili_sources 报 BUILTIN_SOURCES is not defined。
+ */
+const BUILTIN_SOURCES = [
+  { id: 'self', kind: 'self', name: '自己的服务器', note: '最稳，把请求放在服务器上' },
+  { id: 'wbi', kind: 'api', name: '直连（签名接口）', note: '官方接口，受本机 IP 配额影响' },
+  { id: 'plain', kind: 'api', name: '直连（普通接口）', note: '官方接口，偶尔比签名版更快' },
+  { id: 'vtool', kind: 'web', name: 'vtool.pro', url: 'https://vtool.pro/bilibili.html', note: '打开最快，约 1 秒' },
+  { id: 'v2ob', kind: 'web', name: 'v2ob.com', url: 'https://v2ob.com/', note: '约 1.2 秒，已验证可走通' },
+  { id: 'iiilab', kind: 'web', name: 'iiilab', url: 'https://bilibili.iiilab.com/', note: '约 4.8 秒，功能全' },
+  { id: 'zhouql', kind: 'web', name: 'zhouql.vip', url: 'http://zhouql.vip/bilibili/', note: '极简，支持弹幕封面' },
+  { id: 'videofk', kind: 'web', name: 'videofk.com', url: 'https://www.videofk.com/', note: '能用但慢' },
+  { id: 'snapany', kind: 'web', name: 'snapany', url: 'https://snapany.com/zh/bilibili', note: '可选' },
+  { id: 'xbeibeix', kind: 'web', name: 'xbeibeix', url: 'https://xbeibeix.com/api/bilibili/', note: '很慢，常超时' },
+  { id: '6li6', kind: 'web', name: '6li6.com', url: 'https://6li6.com/bilibili', note: '很慢' },
+]
+
 function effectiveSources(settings) {
   const disabled = new Set((settings && settings.disabledSources) || [])
   const custom = ((settings && settings.customSources) || []).map((s) => ({
