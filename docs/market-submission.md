@@ -8,7 +8,7 @@
 
 - **`repository.directory` / `source.path` 都是 `plugin`** —— 本仓库的插件在子目录里，市场用这两个字段定位。已上架的 `dsh-movein-permissions` 是同样的结构，可作为参照。
 - **`source.commit` 必须是固定的 SHA，不能写 `main`**。市场的审核逻辑是「审核固定源码」，写分支名会导致审核内容和实际内容不一致。更新版本时改这个 SHA 并递增 `version`。
-- 当前固定 SHA：`daef492bc2f5e339d21e3ab45f789fc1e5f04127`（版本 `0.1.0`）
+- 当前固定 SHA：`aabe7f8bf6e483f0694ab175a002c7600287a614`（版本 `0.1.0`）
 
 ## 已配置的市场（本机 DSH 已接入）
 
@@ -35,7 +35,7 @@
 **版本**：0.1.0
 **仓库**：https://github.com/admiremaozhuxi/dsh-bili-learn
 **插件目录**：`plugin`（子目录，与已收录的 dsh-movein-permissions 结构相同）
-**固定 commit**：`daef492bc2f5e339d21e3ab45f789fc1e5f04127`
+**固定 commit**：`aabe7f8bf6e483f0694ab175a002c7600287a614`
 
 **一句话**：让 AI 真正读懂 B 站视频——字幕、评论、画面、口播一次拿全。
 
