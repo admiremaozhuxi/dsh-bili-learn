@@ -911,7 +911,9 @@ function registerTools(ctx) {
           }
         }
         await mkdir(HARVEST_ROOT, { recursive: true })
-        const file = path.join(HARVEST_ROOT, `${bvid}.md`)
+        // 分P 必须进文件名，否则连抓几集只会留下最后一集
+        const suffix = wantPage > 1 ? `-P${wantPage}` : ''
+        const file = path.join(HARVEST_ROOT, `${bvid}${suffix}.md`)
         await writeFile(
           file,
           toMarkdown({
