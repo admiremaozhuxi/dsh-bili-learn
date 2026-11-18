@@ -517,59 +517,6 @@ async function harvest(args, settings) {
   return { ok: true, mode: effective, dir, count: results.length, videos: results, note: notes.join(' ') }
 }
 
-/* -------------------------------------------------------------- read plan */
-
-/**
- * 阅读编排：把每个视频的字幕切成若干块，一个块交给一个子 agent。
- *
- * 为什么切成块而不是「一个视频一个 agent」：视频长短差几十倍，一门 55 小时的课
- * 和一个 3 分钟的视频用同样的算力是浪费。切块之后，短视频的块先被消费完，
- * 同一个 worker 立刻去取长视频剩下的块 —— 这就是「短电影的 agent 跑完过来帮忙」，
- * 不需要额外的调度器。
- *
- * 单视频的块数在 [min, max] 区间内按时长决定，但总并发永远不超过 maxTotalAgents。
- */
-function blocksForVideo(subtitleLines, min, max) {
-  const lo = Math.max(1, min)
-  const hi = Math.max(lo, max)
-  if (subtitleLines <= 120) return lo
-  if (subtitleLines <= 300) return Math.min(lo + 1, hi)
-  if (subtitleLines <= 800) return Math.min(lo + 2, hi)
-  return hi
-}
-
-/** 把一个 markdown 按行切成 n 份，各写一个临时文件，保留整体标题做上下文。 */
-async function splitForAgents(file, n, tmpDir) {
-  const text = await readFile(file, 'utf8')
-  const lines = text.split('\n')
-  if (n <= 1 || lines.length < n * 12) {
-    return [{ file, part: 1, total: 1, lineRange: `全部 ${lines.length} 行` }]
-  }
-  const head = lines.slice(0, 6).join('\n') // 标题/UP/播放等
-  const body = lines.slice(6)
-  const size = Math.ceil(body.length / n)
-  const out = []
-  for (let i = 0; i < n; i += 1) {
-    const chunk = body.slice(i * size, (i + 1) * size)
-    if (!chunk.length) break
-    const p = path.join(tmpDir, `${path.basename(file, '.md')}-part${i + 1}.md`)
-    await writeFile(
-      p,
-      `${head}\n\n> 这是全文的第 ${i + 1}/${n} 部分，只负责这一段的提炼。\n\n${chunk.join('\n')}\n`,
-      'utf8',
-    )
-    out.push({
-      file: p,
-      part: i + 1,
-      total: n,
-      lineRange: `第 ${i * size + 1}–${Math.min((i + 1) * size, body.length)} 行`,
-    })
-  }
-  return out
-}
-
-
-
 const textBlock = (text) => [{ type: 'text', text }]
 
 /**
@@ -1621,6 +1568,34 @@ async function probeAll() {
  * One operation, two callers: the panel button and the /bili command both go
  * through these handlers, so the UI never has its own copy of the logic.
  */
+/**
+ * 数字型设置的规格，一处定义。
+ * 原本在三个地方各写一遍（独立子命令 / set 解析 / 状态摘要），改范围要改三处，
+ * 而且摘要两处的措辞已经不一致了。
+ */
+const NUMERIC_SPECS = {
+  videos: { field: 'videoConcurrency', lo: 1, hi: 12, label: '同时阅读视频数' },
+  total: { field: 'maxTotalAgents', lo: 1, hi: 24, label: 'AI 总数上限' },
+  gap: { field: 'gapMs', lo: 300, hi: 5000, label: '请求间隔' },
+}
+
+function checkNumber(raw, spec) {
+  const n = Number(raw)
+  if (!Number.isFinite(n) || n < spec.lo || n > spec.hi) {
+    return { ok: false, message: `${spec.label}必须是 ${spec.lo} 到 ${spec.hi} 之间的整数` }
+  }
+  return { ok: true, value: Math.round(n) }
+}
+
+/** 阅读编排的一句话摘要，status 与 set 共用，避免两套措辞。 */
+function readPlanSummary(s) {
+  return (
+    `取数方式 ${s.mode} · 同时读 ${s.videoConcurrency ?? s.concurrency ?? 3} 个视频` +
+    ` · 每片 ${s.agentsPerVideoMin ?? 2}-${s.agentsPerVideoMax ?? 4} 个AI` +
+    ` · 总数上限 ${s.maxTotalAgents ?? 12} · 间隔 ${s.gapMs}ms`
+  )
+}
+
 function registerCommands(ctx) {
   ctx.effect(() =>
     ctx.commands.register({
@@ -1639,12 +1614,10 @@ function registerCommands(ctx) {
             return {
               kind: 'success',
               text:
-                `取数方式 ${s.mode} · 同时读 ${s.videoConcurrency ?? s.concurrency ?? 3} 个视频` +
-                ` · 每片 ${s.agentsPerVideoMin ?? 2}-${s.agentsPerVideoMax ?? 4} 个AI` +
-                ` · 总数上限 ${s.maxTotalAgents ?? 12} · 间隔 ${s.gapMs}ms\n` +
-                `自建服务器 ${s.endpoint || '（未设置）'}\n` +
-                `登录凭证 ${s.cookie ? '已配置' : '未配置'}\n` +
-                `配置文件 ${SETTINGS_FILE}`,
+                readPlanSummary(s) +
+                `\n自建服务器 ${s.endpoint || '（未设置）'}` +
+                `\n登录凭证 ${s.cookie ? '已配置' : '未配置'}` +
+                `\n配置文件 ${SETTINGS_FILE}`,
             }
           }
 
@@ -1658,12 +1631,11 @@ function registerCommands(ctx) {
           }
 
           if (verb === 'videos' || verb === 'concurrency') {
-            const n = Number(arg)
-            if (!Number.isFinite(n) || n < 1 || n > 12) {
-              return { kind: 'error', text: '同时阅读视频数必须是 1 到 12 之间的整数' }
-            }
-            await saveSettings({ videoConcurrency: Math.round(n) })
-            return { kind: 'success', text: `同时阅读 ${Math.round(n)} 个视频` }
+            const spec = NUMERIC_SPECS.videos
+            const r = checkNumber(arg, spec)
+            if (!r.ok) return { kind: 'error', text: r.message }
+            await saveSettings({ [spec.field]: r.value })
+            return { kind: 'success', text: `同时阅读 ${r.value} 个视频` }
           }
 
           if (verb === 'agents') {
@@ -1685,12 +1657,11 @@ function registerCommands(ctx) {
           }
 
           if (verb === 'total') {
-            const n = Number(arg)
-            if (!Number.isFinite(n) || n < 1 || n > 24) {
-              return { kind: 'error', text: 'AI 总数上限必须是 1 到 24 之间的整数' }
-            }
-            await saveSettings({ maxTotalAgents: Math.round(n) })
-            return { kind: 'success', text: `AI 总数上限 ${Math.round(n)}` }
+            const spec = NUMERIC_SPECS.total
+            const r = checkNumber(arg, spec)
+            if (!r.ok) return { kind: 'error', text: r.message }
+            await saveSettings({ [spec.field]: r.value })
+            return { kind: 'success', text: `AI 总数上限 ${r.value}` }
           }
 
           if (verb === 'endpoint') {
@@ -1763,8 +1734,8 @@ function registerCommands(ctx) {
                 if (['default', 'direct', 'self', 'proxy', 'auto'].includes(v)) patch.mode = v
                 else bad.push(`mode=${v}`)
               } else if (k === 'videos' || k === 'concurrency') {
-                const n = Number(v)
-                if (Number.isFinite(n) && n >= 1 && n <= 12) patch.videoConcurrency = Math.round(n)
+                const r = checkNumber(v, NUMERIC_SPECS.videos)
+                if (r.ok) patch.videoConcurrency = r.value
                 else bad.push(`videos=${v}`)
               } else if (k === 'agents') {
                 const mm = String(v).match(/^(\d+)(?:[-~](\d+))?$/)
@@ -1777,12 +1748,12 @@ function registerCommands(ctx) {
                   } else bad.push(`agents=${v}`)
                 } else bad.push(`agents=${v}`)
               } else if (k === 'total') {
-                const n = Number(v)
-                if (Number.isFinite(n) && n >= 1 && n <= 24) patch.maxTotalAgents = Math.round(n)
+                const r = checkNumber(v, NUMERIC_SPECS.total)
+                if (r.ok) patch.maxTotalAgents = r.value
                 else bad.push(`total=${v}`)
               } else if (k === 'gap') {
-                const n = Number(v)
-                if (Number.isFinite(n) && n >= 300 && n <= 5000) patch.gapMs = Math.round(n)
+                const r = checkNumber(v, NUMERIC_SPECS.gap)
+                if (r.ok) patch.gapMs = r.value
                 else bad.push(`gap=${v}`)
               } else if (k === 'endpoint') {
                 patch.endpoint = v
@@ -1799,11 +1770,7 @@ function registerCommands(ctx) {
             const s2 = await saveSettings(patch)
             return {
               kind: 'success',
-              text:
-                `已应用：${Object.keys(patch).join(', ')}\n` +
-                `当前 取数方式 ${s2.mode} · 同时读 ${s2.videoConcurrency ?? s2.concurrency ?? 3} 个 · ` +
-                  `每片 ${s2.agentsPerVideoMin ?? 2}-${s2.agentsPerVideoMax ?? 4} 个AI · ` +
-                  `总数上限 ${s2.maxTotalAgents ?? 12} · 间隔 ${s2.gapMs}ms`,
+              text: `已应用：${Object.keys(patch).join(', ')}\n当前 ${readPlanSummary(s2)}`,
             }
           }
 
