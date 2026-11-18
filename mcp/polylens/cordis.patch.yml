@@ -1,0 +1,10 @@
+- insert:
+    - id: bili-polylens-mcp
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: bilibili
+        transport: stdio
+        command: 'uvx'
+        args:
+          - polylens-bilibili-mcp
+        failOnStartupError: true

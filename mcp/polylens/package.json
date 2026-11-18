@@ -1,0 +1,13 @@
+{
+  "name": "@local/dsh-bili-polylens",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Connect polylens-bilibili-mcp so DSH can read Bilibili videos, comments and subtitles as a second source.",
+  "exports": {
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": ["cordis.patch.yml", "locale/*.json", "docs", "icon.svg"],
+  "dsh": { "bundle": { "patch": "./cordis.patch.yml" } }
+}

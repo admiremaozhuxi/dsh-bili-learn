@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "Bilibili second source (polylens)",
+    "description": "Reads Bilibili videos, comments and subtitles through polylens-bilibili-mcp as a second source beside the self-hosted harvester, for cross-checking.",
+    "detail": "docs/DETAIL.md"
+  }
+}

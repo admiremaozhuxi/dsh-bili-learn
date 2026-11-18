@@ -1,0 +1,31 @@
+{
+  "meta": {
+    "title": "Bilibili learner",
+    "description": "Use Bilibili as a research corpus: search high-view videos, harvest subtitles and top comments, and hand them to subagents for parallel study.",
+    "detail": "docs/DETAIL.md"
+  },
+  "panel": {
+    "title": "Bilibili learner",
+    "subtitle": "Fetch mode and concurrency",
+    "mode": "Fetch mode",
+    "modeDefault": "Default (do nothing)",
+    "modeDirect": "Direct Bilibili API",
+    "modeSelf": "Self-hosted server",
+    "modeProxy": "Third-party parsers",
+    "modeAuto": "Auto (try in order)",
+    "concurrency": "Videos watched at once",
+    "endpoint": "Self-hosted endpoint",
+    "cookie": "Login credential (SESSDATA)",
+    "cookieSet": "Configured",
+    "cookieUnset": "Not configured (subtitles will be empty)",
+    "proxies": "Third-party pool",
+    "save": "Save",
+    "saved": "Saved",
+    "test": "Test connectivity",
+    "testing": "Testing…",
+    "status": "Status",
+    "recent": "Recent harvests",
+    "empty": "No harvests yet. Ask DSH to learn a topic from Bilibili and this plugin is used.",
+    "refresh": "Refresh"
+  }
+}

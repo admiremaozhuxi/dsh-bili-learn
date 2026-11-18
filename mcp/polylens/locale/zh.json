@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "B站第二数据源（polylens）",
+    "description": "通过 polylens-bilibili-mcp 读取 B 站视频、评论与字幕，作为自建采集器之外的第二数据源，用于交叉验证。",
+    "detail": "docs/DETAIL.md"
+  }
+}
