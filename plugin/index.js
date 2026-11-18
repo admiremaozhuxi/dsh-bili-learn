@@ -707,11 +707,13 @@ function registerTools(ctx) {
     ctx.tools.register({
       name: 'bili_study',
       description:
-        'One-shot study pipeline: harvest a topic from Bilibili, then dispatch one subagent per video ' +
-        'to read and condense it, and merge their findings into a single brief. Use it when the user ' +
-        'says to learn something from Bilibili AND then do work, so the reading happens without ' +
-        'extra turns. If subagent dispatch is unavailable it still returns the harvested files plus ' +
-        'an explicit instruction, so nothing is lost.',
+        'One-shot study pipeline: harvest a topic from Bilibili, then dispatch subagents to read and ' +
+        'condense the videos and merge their findings into a single brief. Use it when the user says to ' +
+        'learn something from Bilibili AND then do work, so the reading starts without extra turns. ' +
+        'NOTE: DSH subagents start immediately and report back asynchronously, so their text usually is ' +
+        'not in this call\'s return value. `pending` counts the subagents still running; their results ' +
+        'arrive as completion notices afterwards. Every harvest file is also on disk under `dir`, so you ' +
+        'can always read them yourself instead of waiting.',
       parameters: {
         type: 'object',
         properties: {
@@ -735,15 +737,23 @@ function registerTools(ctx) {
             count: { type: 'integer' },
             dispatched: { type: 'integer' },
             degraded: { type: 'boolean' },
+            pending: { type: 'integer' },
             note: { type: 'string' },
             brief: { type: 'string' },
           },
         },
         render(args, value) {
           if (!value?.ok) return textBlock(`bili_study 失败：${value?.note || '未知原因'}`)
-          const head = value.degraded
-            ? `已采集 ${value.count} 条，但子 agent 派发不可用（降级模式）。`
-            : `已采集 ${value.count} 条，并派发 ${value.dispatched} 个子 agent 并行研读。`
+          let head
+          if (value.degraded && !value.dispatched) {
+            head = `已采集 ${value.count} 条，但子 agent 派发不可用（降级模式）。`
+          } else if (value.pending) {
+            head =
+              `已采集 ${value.count} 条 · ${value.pending} 个子 agent 已启动（结果异步送达）` +
+              (value.dispatched ? ` · ${value.dispatched} 个已合并` : '')
+          } else {
+            head = `已采集 ${value.count} 条，并合并了 ${value.dispatched} 个子 agent 的研读结果。`
+          }
           return textBlock(`${head}\n目录：${value.dir}\n\n${value.brief || ''}${value.note ? '\n\n' + value.note : ''}`)
         },
       },
@@ -785,6 +795,7 @@ function registerTools(ctx) {
         }
 
         const collected = []
+        const activationRuns = [] // 已启动但结果要异步回来的
         let degraded = false
         let degradeReason = ''
         if (!exec?.agent) {
@@ -825,6 +836,17 @@ function registerTools(ctx) {
                   agent: exec.agent,
                 })
                 const first = batch?.results?.[0]
+                // DSH 的 subagent 是「启动即返回、结果异步送达」，所以拿到的
+                // 往往是 activation 而不是正文。识别出来单独记录，别把这段
+                // JSON 当成阅读结果拼进简报里。
+                const isActivation =
+                  first?.value?.kind === 'activation' ||
+                  first?.meta?.kind === 'activation' ||
+                  /^started subagent/.test(String(first?.value?.name || ''))
+                if (isActivation) {
+                  activationRuns.push(t.v.bvid)
+                  continue
+                }
                 const text = resultText(first)
                 if (first?.isError || !text.trim()) {
                   degraded = true
@@ -867,15 +889,30 @@ function registerTools(ctx) {
           ? parts.join('\n')
           : ''
 
-        const note = degraded
-          ? `${degradeReason} 文件已全部落盘在 ${r.dir}，请直接派子 agent 读取，每个文件一个。`
-          : r.note
+        // 子 agent 是异步的：派出去之后结果要等通知，这里不可能同步拿到正文。
+        // 所以分三种情况说明白，而不是假装已经合并完成。
+        let note
+        if (activationRuns.length && !dispatched.length) {
+          note =
+            `已派出 ${activationRuns.length} 个子 agent 研读，但它们的结果要异步回来，` +
+            `不会出现在本次返回里。文件都在 ${r.dir}。` +
+            `可等它们各自回报后再合并；或直接读取这些文件自己总结。`
+        } else if (degraded) {
+          note = `${degradeReason} 文件已全部落盘在 ${r.dir}，请直接派子 agent 读取，每个文件一个。`
+        } else if (activationRuns.length) {
+          note =
+            `${dispatched.length} 个视频的研读结果已合并；另有 ${activationRuns.length} 个子 agent ` +
+            `仍在后台跑，结果会另行送达。`
+        } else {
+          note = r.note
+        }
 
         return {
           ok: true,
           dir: r.dir,
           count: r.count,
           dispatched: dispatched.length,
+          pending: activationRuns.length,
           degraded,
           brief,
           note,
@@ -1461,11 +1498,11 @@ function registerTools(ctx) {
             .map((r) => ({ id: r.id, name: r.name, ok: r.ok, ms: r.ms, note: r.note }))
         const api = pick('api').concat(pick('self'))
         const web = pick('web')
-        const liveWeb = web.filter((r) => r.ok).map((r) => r.name)
+        const liveWeb = web.filter((r) => r.ok).map((r) => r.name) // 已是字符串数组
         const apiOk = api.some((r) => r.ok)
         const advice = apiOk
-          ? `接口类可用，正常采集即可。${liveWeb.length ? `另有 ${liveWeb.length} 个网页源在线；需要分摊风险时可派子 agent 走 ${liveWeb[0].name}。` : ''}`
-          : `接口类全部不可用。派子 agent 用浏览器打开 ${liveWeb[0] ? liveWeb[0].name : '任一网页源'} 解析，实测约 12 秒一条、无需验证码；完整步骤见插件 docs/BROWSER_SCRAPE.md。`
+          ? `接口类可用，正常采集即可。${liveWeb.length ? `另有 ${liveWeb.length} 个网页源在线；需要分摊风险时可派子 agent 走 ${liveWeb[0]}。` : ''}`
+          : `接口类全部不可用。派子 agent 用浏览器打开 ${liveWeb[0] || '任一网页源'} 解析，实测约 12 秒一条、无需验证码；完整步骤见插件 docs/BROWSER_SCRAPE.md。`
         return { ok: true, at: new Date(sourceState.at).toISOString(), api, web, advice }
       },
     }),
