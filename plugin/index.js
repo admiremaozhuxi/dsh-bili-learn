@@ -297,16 +297,29 @@ async function getSubtitles(bvid, cid, opts) {
     return { lines: [], trace: `empty(allow_submit=${st.allow_submit})${cookie ? '' : ' no-cookie'}` }
   }
   const out = []
-  for (const s of subs) {
-    let u = s.subtitle_url || ''
+  // 一个视频常有多条字幕轨（中/英/日…）。全部拼进来会让行数虚高几倍——
+  // 实测一条 3 分钟视频因此被算成 450 行，而真正的中文只有 98 行，
+  // 下游 agentsFor 按行数分配子 agent，会据此严重误判内容量。只取一条。
+  const pick =
+    subs.find((s) => /^zh[-_]?(cn|hans)?$/i.test(String(s.lan || ''))) ||
+    subs.find((s) => /^zh/i.test(String(s.lan || ''))) ||
+    subs.find((s) => /^ai-zh/i.test(String(s.lan || ''))) ||
+    subs[0]
+  const chosen = pick ? { lan: pick.lan, url: pick.subtitle_url } : null
+  if (chosen) {
+    let u = chosen.url || ''
     if (u.startsWith('//')) u = `https:${u}`
-    if (!u) continue
-    const r = await getJson(u, { gapMs: 400 })
-    for (const x of Array.isArray(r?.body) ? r.body : []) {
-      out.push({ from: x.from, to: x.to, text: x.content })
+    if (u) {
+      const r = await getJson(u, { gapMs: 400 })
+      for (const x of Array.isArray(r?.body) ? r.body : []) {
+        out.push({ from: x.from, to: x.to, text: x.content })
+      }
     }
   }
-  return { lines: out, trace: out.length ? 'ok' : 'empty_body' }
+  return {
+    lines: out,
+    trace: out.length ? `ok[${chosen?.lan || '?'}]${subs.length > 1 ? ` 1/${subs.length}轨` : ''}` : 'empty_body',
+  }
 }
 
 /**
