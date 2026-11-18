@@ -919,8 +919,8 @@ function registerTools(ctx) {
         const liveWeb = web.filter((r) => r.ok).map((r) => r.name)
         const apiOk = api.some((r) => r.ok)
         const advice = apiOk
-          ? `接口类可用，正常采集即可。${liveWeb.length ? `另有 ${liveWeb.length} 个网页源在线，需要分摊风险时可派子 agent 走 ${liveWeb[0]}。` : ''}`
-          : `接口类全部不可用。派子 agent 用浏览器打开 ${liveWeb[0] || '任一网页源'} 解析，或稍后重试。`
+          ? `接口类可用，正常采集即可。${liveWeb.length ? `另有 ${liveWeb.length} 个网页源在线；需要分摊风险时可派子 agent 走 ${liveWeb[0].name}。` : ''}`
+          : `接口类全部不可用。派子 agent 用浏览器打开 ${liveWeb[0] ? liveWeb[0].name : '任一网页源'} 解析，实测约 12 秒一条、无需验证码；完整步骤见插件 docs/BROWSER_SCRAPE.md。`
         return { ok: true, at: new Date(sourceState.at).toISOString(), api, web, advice }
       },
     }),
