@@ -4,6 +4,9 @@
  * 拆分依据是 Prisma 的模块化重构指南 Phase 2：纯函数层稳定之后，按功能域拆。
  * 这个模块只依赖 deps 里传进来的东西，不 import 任何项目内部文件。
  */
+import { mkdir, writeFile } from 'node:fs/promises'
+import path from 'node:path'
+
 export function registerWatch(ctx, deps) {
   const {
     loadSettings, saveSettings, harvest, effectiveSources, probeAll, sourceState,
