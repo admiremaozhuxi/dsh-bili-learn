@@ -1,19 +1,15 @@
 /**
  * Client half: one sidebar panel icon plus its main panel.
  *
- * The sidebar owns the button, so the icon component only paints; it receives
- * { size, active } from the global panel row. The matching `main` registration
- * uses the same key, so selecting the icon switches the central column here.
+ * Visual language follows the host application, not a terminal: light/dark is
+ * decided by theme tokens alone, cards sit on layer-1, headings use
+ * label-primary and descriptions use label-secondary.
  *
- * Design rules applied here (learned from two Bilibili design channels):
- *  - Status has levels, not one flat indicator: the stronger the state, the more
- *    position and weight it earns. Quiet facts get quiet marks.
- *  - Uniform spacing is not the same as visual balance: monospace numbers and CJK
- *    labels have different optical weight, so row heights, letter spacing and
- *    numeric alignment are compensated per column rather than set once.
- *  - Empty states are designed, never left as a bare sentence.
- *
- * Dependency-free on purpose: plain React elements and theme tokens only.
+ * A hard rule learned the hard way: never paint text with a *state* token.
+ * --dsw-alias-state-idle-primary is a disabled-state colour; using it for body
+ * copy makes the panel unreadable in the light theme. Text uses label tokens,
+ * period. No token here carries a hard-coded hex fallback, because a fallback is
+ * a silent bet that the user runs a dark theme.
  */
 window.__ModuleLoader__.load({
   id: '@local/dsh-bili-learn',
@@ -22,41 +18,29 @@ window.__ModuleLoader__.load({
     const h = React.createElement
 
     /* ---------------------------------------------------------------- theme */
-
-    const T = {
-      base: 'var(--dsw-alias-bg-base, #16191c)',
-      layer1: 'var(--dsw-alias-bg-layer-1, #1c2024)',
-      layer2: 'var(--dsw-alias-bg-layer-2, #22272c)',
-      sidebar: 'var(--dsw-specific-sidebar-fill, #14171a)',
-      line1: 'var(--dsw-alias-border-l1, rgba(255,255,255,0.08))',
-      line2: 'var(--dsw-alias-border-l2, rgba(255,255,255,0.14))',
-      brand: 'var(--dsw-alias-brand-primary, #4f9cf9)',
-      text1: 'var(--dsw-alias-label-primary, #e8eaed)',
-      text2: 'var(--dsw-alias-label-secondary, #9aa0a6)',
-      idle: 'var(--dsw-alias-state-idle-primary, #5f6368)',
-      ok: 'var(--dsw-alias-state-success-primary, #34a853)',
-      warn: 'var(--dsw-alias-state-warn-primary, #f9ab00)',
-      err: 'var(--dsw-alias-state-error-primary, #ea4335)',
+    // Only semantic tokens. No hex fallbacks: the host always provides them.
+    const V = {
+      bgBase: 'var(--dsw-alias-bg-base)',
+      layer1: 'var(--dsw-alias-bg-layer-1)',
+      layer2: 'var(--dsw-alias-bg-layer-2)',
+      line1: 'var(--dsw-alias-border-l1)',
+      line2: 'var(--dsw-alias-border-l2)',
+      brand: 'var(--dsw-alias-brand-primary)',
+      // 文本一律走 label 令牌，绝不用 state 令牌
+      text: 'var(--dsw-alias-label-primary)',
+      sub: 'var(--dsw-alias-label-secondary)',
+      ok: 'var(--dsw-alias-state-success-primary)',
+      warn: 'var(--dsw-alias-state-warn-primary)',
     }
 
-    const MONO = 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace'
+    const MONO = 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace'
     const SANS = 'system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif'
-
-    // 桌面式节奏：行高 26、栏高 34、字 12.5
-    const Z = {
-      rowH: 26,
-      barH: 34,
-      footH: 26,
-      fs: 12.5,
-      fsSm: 11.5,
-    }
 
     /* ----------------------------------------------------------------- icon */
 
     function Icon(props) {
       const size = (props && props.size) || 20
       const active = Boolean(props && props.active)
-      const tint = active ? T.brand : 'currentColor'
       return h(
         'svg',
         {
@@ -65,76 +49,111 @@ window.__ModuleLoader__.load({
           viewBox: '0 0 24 24',
           fill: 'none',
           'aria-hidden': true,
-          style: { display: 'block', flex: '0 0 auto' },
+          style: { display: 'block' },
         },
         h('rect', {
           x: 2.5, y: 4.5, width: 19, height: 12.5, rx: 3,
-          stroke: tint, strokeWidth: 1.5,
+          stroke: 'currentColor', strokeWidth: 1.6,
         }),
         h('path', {
           d: 'M9.8 8.4 L14.6 10.75 L9.8 13.1 Z',
-          fill: active ? T.brand : 'currentColor',
+          fill: 'currentColor',
+          opacity: active ? 1 : 0.7,
         }),
         h('path', {
           d: 'M7.5 20.2 H16.5',
-          stroke: tint, strokeWidth: 1.5, strokeLinecap: 'round',
+          stroke: 'currentColor', strokeWidth: 1.6, strokeLinecap: 'round',
         }),
-        active
-          ? h('circle', { cx: 19.2, cy: 19.2, r: 2.6, fill: T.brand })
-          : null,
       )
     }
 
     /* --------------------------------------------------------------- pieces */
 
-    /** 分区标题：小号、字距拉开，靠字重和留白分层，不靠色块。 */
-    function GroupTitle(props) {
+    /** 卡片行：DSH 原生列表的形态——图标块 + 标题 + 描述 + 右侧可选状态。 */
+    function Card(props) {
       return h(
         'div',
         {
           style: {
-            display: 'flex',
+            display: 'grid',
+            gridTemplateColumns: props.icon ? '34px 1fr auto' : '1fr auto',
             alignItems: 'center',
-            justifyContent: 'space-between',
-            height: Z.barH,
-            padding: '0 12px',
-            borderBottom: `1px solid ${T.line1}`,
-            background: T.layer1,
+            gap: 12,
+            padding: '10px 14px',
+            background: V.layer1,
+            border: `1px solid ${V.line1}`,
+            borderRadius: 8,
+            marginBottom: 8,
           },
         },
+        props.icon
+          ? h(
+              'div',
+              {
+                style: {
+                  width: 34,
+                  height: 34,
+                  borderRadius: 8,
+                  background: V.layer2,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: props.iconTone || V.brand,
+                  flex: '0 0 auto',
+                },
+              },
+              props.icon,
+            )
+          : null,
         h(
-          'span',
-          {
-            style: {
-              fontFamily: SANS,
-              fontSize: Z.fsSm,
-              fontWeight: 600,
-              letterSpacing: '0.06em',
-              color: T.text2,
-              textTransform: 'uppercase',
-            },
-          },
-          props.title,
+          'div',
+          { style: { minWidth: 0 } },
+          h(
+            'div',
+            { style: { display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'nowrap' } },
+            h(
+              'span',
+              { style: { fontFamily: SANS, fontSize: 13.5, fontWeight: 600, color: V.text } },
+              props.title,
+            ),
+            props.tag || null,
+          ),
+          props.desc
+            ? h(
+                'div',
+                {
+                  style: {
+                    fontFamily: SANS,
+                    fontSize: 12,
+                    color: V.sub,
+                    lineHeight: 1.55,
+                    marginTop: 2,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  },
+                },
+                props.desc,
+              )
+            : null,
         ),
         props.right || null,
       )
     }
 
-    /** 右侧小徽标：弱提示用 idle 色，强的才用品牌/状态色（状态分级）。 */
-    function Badge(props) {
-      const tone = props.tone || T.idle
+    /** 小标签：弱信息用描边，不填色，避免和正文抢注意力。 */
+    function Tag(props) {
       return h(
         'span',
         {
           style: {
-            fontFamily: MONO,
+            fontFamily: SANS,
             fontSize: 10.5,
-            letterSpacing: '0.02em',
-            color: tone,
-            border: `1px solid ${tone}`,
-            borderRadius: 3,
-            padding: '1px 5px',
-            opacity: props.quiet ? 0.75 : 1,
+            color: props.tone || V.sub,
+            border: `1px solid ${props.tone || V.line2}`,
+            borderRadius: 4,
+            padding: '1px 6px',
+            lineHeight: '14px',
             whiteSpace: 'nowrap',
           },
         },
@@ -142,197 +161,197 @@ window.__ModuleLoader__.load({
       )
     }
 
-    /** 一行键值：左边中文标签，右边等宽值。中英混排做视觉补偿。 */
-    function KV(props) {
+    /** 分区标题：DSH 原生是小标题 + 右侧次级入口。 */
+    function Section(props) {
       return h(
-        'div',
-        {
-          style: {
-            display: 'grid',
-            gridTemplateColumns: props.cols || '96px 1fr',
-            alignItems: 'center',
-            minHeight: Z.rowH,
-            padding: '0 12px',
-            borderBottom: `1px solid ${T.line1}`,
-          },
-        },
-        h(
-          'span',
-          { style: { fontFamily: SANS, fontSize: Z.fs, color: T.text2 } },
-          props.k,
-        ),
-        h(
-          'span',
-          {
-            style: {
-              fontFamily: props.mono === false ? SANS : MONO,
-              fontSize: props.mono === false ? Z.fs : Z.fs - 0.5,
-              color: props.tone || T.text1,
-              fontVariantNumeric: 'tabular-nums',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
-            },
-          },
-          props.v,
-        ),
-      )
-    }
-
-    /* ----------------------------------------------------------------- data */
-
-    const MODES = [
-      ['auto', '全自动', '探测自建服务，不通回落直连', true],
-      ['direct', '直连', '本机直接访问官方接口', false],
-      ['self', '自建服务', '直链与字幕走自己的服务器', false],
-      ['proxy', '第三方站', '站点池轮询（当前为占位）', false],
-      ['default', '默认', '不发起任何请求', false],
-    ]
-
-    const TOOLS = [
-      ['bili_learn', '批量采集', '按播放量搜索 → 字幕/评论 → 落盘 markdown'],
-      ['bili_study', '一键研读', '采集后派子 agent 并行读，合并成简报'],
-      ['bili_watch', '单条深度', '给 BV 号直接抓，不用搜索'],
-      ['bili_config', '配置', '读写取数方式、并发、凭据'],
-    ]
-
-    const CAPS = [
-      ['元数据', 'ok', '一次 100 条'],
-      ['评论', 'ok', '需凭据取全'],
-      ['字幕', 'warn', '约 11%'],
-      ['直链', 'ok', '无需登录'],
-      ['音频转写', 'ok', '慢，但一定有'],
-    ]
-
-    const CAP_TONE = { ok: T.ok, warn: T.warn, err: T.err }
-
-    /* ---------------------------------------------------------------- panel */
-
-    function Panel() {
-      const shell = {
-        height: '100%',
-        background: T.base,
-        color: T.text1,
-        fontFamily: SANS,
-        fontSize: Z.fs,
-        display: 'flex',
-        flexDirection: 'column',
-        overflow: 'hidden',
-        boxSizing: 'border-box',
-      }
-
-      // 标题栏：牌子在左，关键状态在右，安静的事实不抢注意力
-      const titleBar = h(
         'div',
         {
           style: {
             display: 'flex',
             alignItems: 'center',
-            gap: 8,
-            height: 42,
-            padding: '0 14px',
-            background: T.sidebar,
-            borderBottom: `1px solid ${T.line2}`,
-            flex: '0 0 auto',
+            justifyContent: 'space-between',
+            margin: '18px 0 10px',
           },
         },
-        h('div', { style: { transform: 'scale(0.82)', transformOrigin: 'left center' } }, h(Icon, { size: 22, active: true })),
         h(
-          'div',
-          { style: { display: 'flex', flexDirection: 'column', gap: 1 } },
-          h('div', { style: { fontSize: 13, fontWeight: 600, letterSpacing: '0.01em' } }, 'B站学习器'),
-          h('div', { style: { fontSize: 10.5, color: T.text2 } }, '把视频变成可读正文'),
+          'span',
+          { style: { fontFamily: SANS, fontSize: 13, fontWeight: 600, color: V.text } },
+          props.title,
         ),
-        h('div', { style: { flex: 1 } }),
-        h(Badge, { tone: T.brand }, 'auto'),
-        h(Badge, { tone: T.idle, quiet: true }, '并发 4'),
+        props.right || null,
       )
+    }
 
-      // 主体：左栏配置，右栏工具，中间一条细分隔线（桌面式双栏）
-      const body = h(
+    /** 状态点：正常实心，警告空心环——形状区分，不只靠颜色。 */
+    function Dot(props) {
+      const filled = props.tone === 'ok'
+      return h('span', {
+        style: {
+          display: 'inline-block',
+          width: filled ? 7 : 8,
+          height: filled ? 7 : 8,
+          borderRadius: '50%',
+          background: filled ? V.ok : 'transparent',
+          border: filled ? 'none' : `1.5px solid ${V.warn}`,
+          boxSizing: 'border-box',
+          flex: '0 0 auto',
+        },
+      })
+    }
+
+    /* ----------------------------------------------------------------- data */
+
+    const MODES = [
+      ['auto', '全自动', '探测自建服务是否在线，不通就回落直连。推荐', true],
+      ['direct', '直连', '本机直接访问 B 站官方接口', false],
+      ['self', '自建服务', '直链与字幕走自己的解析服务，把风控挪到服务器 IP', false],
+      ['proxy', '第三方站', '站点池依次尝试（当前为占位，这类站点不给字幕）', false],
+      ['default', '默认', '什么都不做，调用会被明确拒绝并说明原因', false],
+    ]
+
+    const TOOLS = [
+      ['learn', 'bili_learn', '批量采集', '按播放量搜索 → 抓字幕与评论 → 每个视频落一份 markdown'],
+      ['study', 'bili_study', '一键研读', '采集后按并发派子 agent 各读一个文件，再合并成简报'],
+      ['watch', 'bili_watch', '单条深度', '给一个 BV 号直接抓，不用搜索'],
+      ['config', 'bili_config', '配置', '读写取数方式、并发、自建服务器与登录凭证'],
+    ]
+
+    const CAPS = [
+      ['元数据', 'ok', '一次 100 条'],
+      ['评论', 'ok', '需凭据取全'],
+      ['字幕', 'warn', '约 11% 命中'],
+      ['音视频直链', 'ok', '无需登录'],
+      ['音频转写', 'ok', '慢，但一定有'],
+    ]
+
+    /* ---------------------------------------------------------------- panel */
+
+    function Panel() {
+      return h(
         'div',
         {
           style: {
-            display: 'grid',
-            gridTemplateColumns: '300px 1px 1fr',
-            flex: 1,
-            minHeight: 0,
-            overflow: 'hidden',
+            height: '100%',
+            overflowY: 'auto',
+            background: V.bgBase,
+            color: V.text,
+            fontFamily: SANS,
+            boxSizing: 'border-box',
+            padding: '20px 24px 32px',
           },
         },
-        // 左：取数方式
         h(
           'div',
-          { style: { display: 'flex', flexDirection: 'column', minWidth: 0, overflow: 'auto' } },
-          h(GroupTitle, { title: '取数方式' }),
-          MODES.map(([id, name, desc, on], i) =>
+          { style: { maxWidth: 860 } },
+
+          // 页头：标题 + 说明，与 DSH 原生页一致
+          h(
+            'div',
+            { style: { display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16 } },
+            h(
+              'div',
+              null,
+              h('div', { style: { fontSize: 18, fontWeight: 600, color: V.text, letterSpacing: '0.01em' } }, 'B站学习器'),
+              h(
+                'div',
+                { style: { fontSize: 12.5, color: V.sub, marginTop: 4, lineHeight: 1.6 } },
+                '把 B 站视频变成可读的正文：按播放量搜索，抓字幕与高赞评论，落成本地 markdown，再交给子 agent 研读。',
+              ),
+            ),
+            h('div', { style: { display: 'flex', gap: 8, flex: '0 0 auto', paddingTop: 2 } },
+              h(Tag, { tone: V.brand }, 'auto'),
+              h(Tag, null, '并发 4'),
+            ),
+          ),
+
+          // 取数方式
+          h(Section, {
+            title: '取数方式',
+            right: h('span', { style: { fontSize: 11.5, color: V.sub } }, '在对话里说一句即可修改'),
+          }),
+          MODES.map(([id, name, desc, on]) =>
             h(
               'div',
               {
                 key: id,
                 style: {
                   display: 'grid',
-                  gridTemplateColumns: '3px 1fr',
-                  minHeight: Z.rowH + 10,
-                  borderBottom: `1px solid ${T.line1}`,
-                  background: on ? T.layer1 : 'transparent',
+                  gridTemplateColumns: '22px 1fr auto',
+                  alignItems: 'center',
+                  gap: 10,
+                  padding: '9px 14px',
+                  marginBottom: 8,
+                  background: on ? V.layer1 : 'transparent',
+                  border: `1px solid ${on ? V.brand : V.line1}`,
+                  borderRadius: 8,
                 },
               },
-              // 选中用左侧竖条，不用胶囊；未选中留空位，保证文字左缘对齐
-              h('div', { style: { background: on ? T.brand : 'transparent' } }),
+              // 单选用圆圈，选中填充——形状本身表达状态，不依赖颜色深浅
+              h('span', {
+                style: {
+                  width: 14,
+                  height: 14,
+                  borderRadius: '50%',
+                  border: `1.5px solid ${on ? V.brand : V.line2}`,
+                  background: on ? V.brand : 'transparent',
+                  boxSizing: 'border-box',
+                  flex: '0 0 auto',
+                },
+              }),
               h(
                 'div',
-                { style: { padding: '5px 11px', display: 'flex', flexDirection: 'column', gap: 1, minWidth: 0 } },
+                { style: { minWidth: 0 } },
                 h(
                   'div',
-                  { style: { display: 'flex', alignItems: 'baseline', gap: 6 } },
-                  h('span', { style: { fontSize: Z.fs, color: on ? T.text1 : T.text2, fontWeight: on ? 600 : 400 } }, name),
-                  h('span', { style: { fontFamily: MONO, fontSize: 10, color: on ? T.brand : T.idle } }, id),
+                  { style: { display: 'flex', alignItems: 'baseline', gap: 8 } },
+                  h('span', { style: { fontSize: 13, fontWeight: on ? 600 : 400, color: V.text } }, name),
+                  h('span', { style: { fontFamily: MONO, fontSize: 10.5, color: V.sub } }, id),
                 ),
-                h('div', {
-                  style: { fontSize: 11, color: T.idle, lineHeight: 1.45, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
-                }, desc),
+                h(
+                  'div',
+                  {
+                    style: {
+                      fontSize: 11.5, color: V.sub, marginTop: 1, lineHeight: 1.5,
+                      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                    },
+                  },
+                  desc,
+                ),
               ),
+              on ? h(Tag, { tone: V.brand }, '当前') : h('span'),
             ),
           ),
-        ),
-        h('div', { style: { background: T.line1 } }),
-        // 右：工具与能力
-        h(
-          'div',
-          { style: { display: 'flex', flexDirection: 'column', minWidth: 0, overflow: 'auto' } },
-          h(GroupTitle, { title: '工具' }),
-          TOOLS.map(([name, label, desc], i) =>
+
+          // 工具
+          h(Section, { title: '工具' }),
+          TOOLS.map(([key, name, label, desc]) =>
             h(
-              'div',
+              Card,
               {
-                key: name,
-                style: {
-                  display: 'grid',
-                  gridTemplateColumns: '132px 1fr',
-                  alignItems: 'center',
-                  minHeight: Z.rowH + 4,
-                  padding: '2px 12px',
-                  borderBottom: `1px solid ${T.line1}`,
-                },
-              },
-              h(
-                'div',
-                { style: { display: 'flex', alignItems: 'baseline', gap: 6 } },
-                h('span', { style: { fontFamily: MONO, fontSize: 11.5, color: T.brand } }, name.replace('bili_', '')),
-                h('span', { style: { fontSize: 10.5, color: T.idle } }, label),
-              ),
-              h(
-                'div',
-                { style: { fontSize: 11.5, color: T.text2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } },
+                key,
+                icon: h(Icon, { size: 17, active: false }),
+                title: name,
+                tag: h(Tag, null, label),
                 desc,
-              ),
+              },
             ),
           ),
-          h(GroupTitle, { title: '数据能力', right: h(Badge, { tone: T.warn, quiet: true }, '字幕需凭据') }),
+
+          // 数据能力
+          h(Section, {
+            title: '数据能力',
+            right: h('span', { style: { fontSize: 11.5, color: V.sub } }, '字幕需登录态，其余不需要'),
+          }),
           h(
             'div',
-            { style: { display: 'flex', flexDirection: 'column' } },
+            {
+              style: {
+                background: V.layer1,
+                border: `1px solid ${V.line1}`,
+                borderRadius: 8,
+                overflow: 'hidden',
+              },
+            },
             CAPS.map(([name, tone, note], i) =>
               h(
                 'div',
@@ -340,77 +359,45 @@ window.__ModuleLoader__.load({
                   key: name,
                   style: {
                     display: 'grid',
-                    gridTemplateColumns: '14px 76px 1fr',
+                    gridTemplateColumns: '18px 92px 1fr',
                     alignItems: 'center',
-                    minHeight: Z.rowH - 2,
-                    padding: '0 12px',
-                    borderBottom: i === CAPS.length - 1 ? 'none' : `1px solid ${T.line1}`,
+                    gap: 8,
+                    padding: '9px 14px',
+                    borderTop: i === 0 ? 'none' : `1px solid ${V.line1}`,
                   },
                 },
-                // 状态点有强弱：正常是小实心，警告带一圈，避免所有点长得一样
-                h('div', {
-                  style: {
-                    width: tone === 'ok' ? 6 : 7,
-                    height: tone === 'ok' ? 6 : 7,
-                    borderRadius: '50%',
-                    background: tone === 'ok' ? CAP_TONE.ok : 'transparent',
-                    border: tone === 'ok' ? 'none' : `1.5px solid ${CAP_TONE[tone]}`,
-                    boxSizing: 'border-box',
-                  },
-                }),
-                h('span', { style: { fontSize: Z.fs, color: T.text1 } }, name),
-                h('span', { style: { fontFamily: MONO, fontSize: Z.fs - 0.5, color: T.text2 } }, note),
+                h(Dot, { tone }),
+                h('span', { style: { fontSize: 12.5, color: V.text } }, name),
+                h('span', { style: { fontFamily: MONO, fontSize: 11.5, color: V.sub } }, note),
               ),
             ),
           ),
+
+          // 说明
+          h(
+            'div',
+            {
+              style: {
+                marginTop: 18,
+                padding: '11px 14px',
+                background: V.layer2,
+                border: `1px solid ${V.line1}`,
+                borderRadius: 8,
+                fontSize: 11.5,
+                lineHeight: 1.7,
+                color: V.sub,
+              },
+            },
+            '改配置不用点这个面板：在对话里说 ',
+            h('span', { style: { fontFamily: MONO, color: V.text } }, '把 B站学习器设成 auto 模式，并发 6'),
+            ' 就行，DSH 会写进 ',
+            h('span', { style: { fontFamily: MONO, color: V.text } }, '~/.dsh-bili-learn/settings.json'),
+            '。采集产物在 ',
+            h('span', { style: { fontFamily: MONO, color: V.text } }, 'harvests/'),
+            ' 下，每个视频一份 markdown。',
+          ),
         ),
       )
-
-      // 状态栏：只放最有判断价值的三件事，等宽对齐
-      const foot = h(
-        'div',
-        {
-          style: {
-            display: 'flex',
-            alignItems: 'center',
-            gap: 14,
-            height: Z.footH,
-            padding: '0 12px',
-            background: T.sidebar,
-            borderTop: `1px solid ${T.line2}`,
-            fontFamily: MONO,
-            fontSize: 10.5,
-            color: T.text2,
-            flex: '0 0 auto',
-          },
-        },
-        h('span', { style: { color: T.ok } }, '● 就绪'),
-        h('span', null, 'gap 1200ms'),
-        h('span', null, 'harvests ~/.dsh-bili-learn'),
-        h('div', { style: { flex: 1 } }),
-        h('span', { style: { color: T.idle } }, 'bili-learn 0.1.0'),
-      )
-
-      // 说明区：只在宽屏出现，窄屏不挤——用说明承载「怎么改」，不占操作位
-      const note = h(
-        'div',
-        {
-          style: {
-            padding: '9px 14px',
-            borderTop: `1px solid ${T.line1}`,
-            background: T.layer1,
-            fontSize: 11,
-            lineHeight: 1.6,
-            color: T.idle,
-            flex: '0 0 auto',
-          },
-        },
-        '在对话里说一句就能改配置，例如 ',
-        h('span', { style: { fontFamily: MONO, color: T.text2 } }, '把 B站学习器设成 auto 模式，并发 6'),
-        '。面板只读，避免浏览器侧改写配置文件。',
-      )
-
-      return h('div', { style: shell }, titleBar, body, note, foot)
     }
 
     /* ------------------------------------------------------------- apply */
