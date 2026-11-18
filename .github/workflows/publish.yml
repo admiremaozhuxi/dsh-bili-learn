@@ -1,0 +1,67 @@
+name: publish
+
+# 两种触发方式：
+#   1. 打 tag（v0.2.3 这种）→ 自动发布
+#   2. 手动点击 → 可勾选「只演练不发布」先看输出
+#
+# 认证走 npm 的 Trusted Publishing（OIDC），不存任何 token。
+# 前提：npmjs.com 的包设置页已绑定「本仓库 + 本 workflow 文件名」。
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 只演练不发布
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  id-token: write # OIDC 必需
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: plugin
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: 确认 npm 版本支持 OIDC（需 11.5.1+）
+        run: |
+          npm --version
+          node --version
+
+      - name: 版本一致性：tag 必须等于 package.json 的 version
+        run: |
+          PKG=$(node -p "require('./package.json').version")
+          echo "package.json = $PKG"
+          echo "ref = $GITHUB_REF_NAME ($GITHUB_REF_TYPE)"
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            TAG="${GITHUB_REF_NAME#v}"
+            if [ "$PKG" != "$TAG" ]; then
+              echo "::error::版本不一致：tag 是 $TAG，package.json 是 $PKG"
+              exit 1
+            fi
+          fi
+
+      - name: 语法自检（发布前最后一道）
+        run: |
+          node --check index.js
+          node --check client.js
+          for f in $(find lib -name '*.js'); do node --check "$f" || exit 1; done
+          echo "全部通过"
+
+      - name: 打包清单预览
+        run: npm pack --dry-run
+
+      - name: 发布到 npm
+        if: inputs.dry_run != true
+        run: npm publish --access public
