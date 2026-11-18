@@ -204,7 +204,35 @@ async function getCid(bvid, opts) {
 }
 
 /**
+ * 全部 分P 清单。网课、系列课往往几十上百个 P，只取第一个等于什么都没读到。
+ *
+ * 单 P 的弹幕数拿不到：x/v2/dm/web/view 返回 protobuf/XML（非 JSON），
+ * x/player/dm 直接 404。所以用「标题 + 时长 + 首帧图」判断重点章节，
+ * 整视频的总弹幕数从 view 的 stat 拿。
+ */
+async function getParts(bvid, opts) {
+  const d = await getJson(`${API}/x/player/pagelist?bvid=${bvid}`, opts)
+  if (d.code !== 0) return null
+  return (d.data || []).map((p) => ({
+    page: Number(p.page) || 0,
+    cid: p.cid,
+    title: String(p.part || '').trim(),
+    duration: Number(p.duration) || 0,
+    cover: p.first_frame || '',
+  }))
+}
+
+/** UP 主资料：粉丝数只能从 relation/stat 拿，acc/info 已经不返回 fans。 */
+async function getUpStat(mid, opts) {
+  if (!mid) return null
+  const d = await getJson(`${API}/x/relation/stat?vmid=${mid}`, opts)
+  if (d.code !== 0) return null
+  return { follower: Number(d?.data?.follower) || 0, following: Number(d?.data?.following) || 0 }
+}
+
+/**
  * 取一条视频的完整元信息（含 aid）。
+ * 先说结论：登录后 wbi/view 可用，能拿 aid。
  *
  * 评论接口只认 aid，而 pagelist 不带 aid。无 cookie 时 view 会被 412 挡回，
  * 但实测登录后 wbi/view 正常返回，所以这里按「有 cookie 才试」的策略走，
@@ -229,6 +257,7 @@ async function getViewMeta(bvid, opts) {
       title: v.title,
       desc: v.desc,
       owner: v?.owner?.name,
+      ownerMid: v?.owner?.mid,
       stat: v.stat,
     }
   } catch {
@@ -769,6 +798,11 @@ function registerTools(ctx) {
         type: 'object',
         properties: {
           bvid: { type: 'string', description: 'BV id, e.g. BV15es76gEgL.' },
+          p: {
+            type: 'integer',
+            description:
+              '第几 P（分P 序号）。多集课程里指定这一集，默认 1。分P 清单用 bili_series 查。',
+          },
           aid: {
             type: 'string',
             description:
@@ -819,13 +853,17 @@ function registerTools(ctx) {
         if (!/^BV[0-9A-Za-z]+$/.test(bvid)) {
           return { ok: false, bvid, subtitleTrace: 'invalid bvid', subtitleLines: 0, comments: 0 }
         }
-        // 评论要 aid；pagelist 不给，只有登录后 view 才稳
-        const meta = await getViewMeta(bvid, opts)
-        const page = meta?.cid ? { cid: meta.cid } : await getCid(bvid, opts)
-        if (!page?.cid) {
+        // 分P：一集课程就是多个 P，只取第一个等于读错了集
+        const wantPage = Math.max(1, Number(args.p) || 1)
+        const parts = await getParts(bvid, opts)
+        if (!parts || !parts.length) {
           return { ok: false, bvid, subtitleTrace: 'pagelist failed', subtitleLines: 0, comments: 0 }
         }
-        const subs = await getSubtitles(bvid, page.cid, opts)
+        const target = parts.find((x) => x.page === wantPage) || parts[0]
+
+        // 评论要 aid；整条视频共用同一个 aid，与第几 P 无关
+        const meta = await getViewMeta(bvid, opts)
+        const subs = await getSubtitles(bvid, target.cid, opts)
         const aid = meta?.aid || args.aid
         const comments =
           args.withComments === false
@@ -1030,6 +1068,123 @@ function registerTools(ctx) {
           text: r.text,
           file,
           log: r.log,
+        }
+      },
+    }),
+  )
+
+  /* --------------------------------------------------------------- series */
+  ctx.effect(() =>
+    ctx.tools.register({
+      name: 'bili_series',
+      description:
+        'List every part of a multi-part video. Courses and tutorial series often have dozens to hundreds of ' +
+        'parts — without this you only ever read part one. Returns each part with its page number, cid, title ' +
+        'and duration, plus the uploader profile and the whole-video stats. Optionally probes the first few ' +
+        'parts for subtitles, since the subtitle endpoint is per-part. Use it before studying a course so you ' +
+        'can pick which parts are worth the tokens instead of fetching everything.',
+      parameters: {
+        type: 'object',
+        properties: {
+          bvid: { type: 'string', description: 'BV id of any part of the series.' },
+          probeSubtitles: {
+            type: 'integer',
+            description:
+              'Check the first N parts for a subtitle track. Default 0 (list only). Each part costs one request.',
+          },
+        },
+        required: ['bvid'],
+      },
+      output: {
+        schema: {
+          type: 'object',
+          properties: {
+            ok: { type: 'boolean' },
+            bvid: { type: 'string' },
+            title: { type: 'string' },
+            owner: { type: 'object' },
+            stat: { type: 'object' },
+            partCount: { type: 'integer' },
+            totalDuration: { type: 'integer' },
+            subtitled: { type: 'integer' },
+            parts: { type: 'array', items: { type: 'object' } },
+            note: { type: 'string' },
+          },
+        },
+        render(args, value) {
+          if (!value?.ok) return textBlock(`bili_series 失败：${value?.note || '未知原因'}`)
+          const o = value.owner || {}
+          const st = value.stat || {}
+          const lines = [
+            `${value.title}  ·  ${value.partCount} 个分P  ·  总时长 ${Math.round((value.totalDuration || 0) / 60)} 分钟`,
+            `UP：${o.name || '-'}（粉丝 ${(o.follower || 0).toLocaleString()}）`,
+            `播放 ${(st.view || 0).toLocaleString()} · 弹幕 ${(st.danmaku || 0).toLocaleString()} · 评论 ${(st.reply || 0).toLocaleString()}`,
+            '',
+          ]
+          for (const p of (value.parts || []).slice(0, 40)) {
+            const mm = Math.floor((p.duration || 0) / 60)
+            const ss = String((p.duration || 0) % 60).padStart(2, '0')
+            const flag = p.hasSubtitle === true ? ' [字幕]' : p.hasSubtitle === false ? ' [无字幕]' : ''
+            lines.push(`P${p.page}  ${mm}:${ss}${flag}  ${p.title}`)
+          }
+          if ((value.parts || []).length > 40) lines.push(`…还有 ${value.parts.length - 40} 个分P`)
+          if (value.note) lines.push('', value.note)
+          return textBlock(lines.join('\n'))
+        },
+      },
+      async execute(args) {
+        const s = await loadSettings()
+        const opts = { cookie: s.cookie || '', gapMs: Math.max(300, Number(s.gapMs) || 1200) }
+        const bvid = String(args.bvid || '').trim()
+        if (!/^BV[0-9A-Za-z]+$/.test(bvid)) {
+          return { ok: false, bvid, note: 'invalid bvid', parts: [], partCount: 0 }
+        }
+
+        const parts = await getParts(bvid, opts)
+        if (!parts || !parts.length) {
+          return { ok: false, bvid, note: '取不到分P清单', parts: [], partCount: 0 }
+        }
+
+        const meta = await getViewMeta(bvid, opts)
+        const owner = { name: meta?.owner || '', mid: meta?.ownerMid || 0, follower: 0 }
+        if (owner.mid) {
+          const upStat = await getUpStat(owner.mid, opts)
+          if (upStat) owner.follower = upStat.follower
+        }
+
+        // 可选：探测前 N 个 P 有没有字幕
+        const probe = Math.min(Math.max(Number(args.probeSubtitles) || 0, 0), 20)
+        let subtitled = 0
+        if (probe > 0) {
+          for (const p of parts.slice(0, probe)) {
+            const r = await getSubtitles(bvid, p.cid, opts)
+            p.hasSubtitle = r.lines.length > 0
+            if (p.hasSubtitle) subtitled += 1
+          }
+        }
+
+        const totalDuration = parts.reduce((n, p) => n + (p.duration || 0), 0)
+        const stat = meta?.stat || {}
+        return {
+          ok: true,
+          bvid,
+          title: meta?.title || '',
+          owner,
+          stat: {
+            view: stat.view || 0,
+            danmaku: stat.danmaku || 0,
+            reply: stat.reply || 0,
+            like: stat.like || 0,
+            favorite: stat.favorite || 0,
+          },
+          partCount: parts.length,
+          totalDuration,
+          subtitled,
+          parts,
+          note:
+            probe > 0
+              ? `已探测前 ${probe} 个分P，其中 ${subtitled} 个有字幕。用 bili_watch 加 p 参数抓具体某一集。`
+              : '只列清单，未探测字幕。要看某集内容，用 bili_watch 加 p 参数；想知道哪些集有字幕，传 probeSubtitles。',
         }
       },
     }),

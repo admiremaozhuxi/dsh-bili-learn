@@ -83,6 +83,9 @@ git clone https://github.com/admiremaozhuxi/dsh-bili-learn.git
 | **字幕覆盖率约 11%** | 4 个分区 9 条视频，只有 1 条带字幕轨（`ai-zh`+`ai-en`，拉到 792 行）。知识类高，游戏舞蹈基本没有 |
 | **评论无 cookie 会截断** | 未登录时请求 `ps=20`，实际只回 **3 条**预览。**登录后每页 20 条**，可翻页（`pn`），可取二级评论（`/x/v2/reply/reply`）。实测翻两页拿到 40 条，二级评论 6 条 |
 | **`wbi/view` 登录后可用** | 无 cookie 时 `view` 返回 412，一度以为它永久不可用。实测**登录后 `wbi/view` 正常返回**，能拿 `aid`（评论接口必需，`pagelist` 不给） |
+| **分P 必须单独处理** | 网课往往几十上百个 P。实测黑马程序员 Python 教程 **536 个 P、总时长 55 小时**。只取第一个 P 等于什么都没读到，所以 `bili_series` 先列清单、`bili_watch` 用 `p` 指定哪一集 |
+| **单P 弹幕数拿不到** | `x/v2/dm/web/view` 返回 protobuf/XML（非 JSON），`x/player/dm` 直接 404。改用「标题 + 时长 + 首帧图」判断重点章节，整片弹幕总数从 `view` 的 `stat` 拿 |
+| **UP 粉丝数要另调接口** | `view` 只给名字不给粉丝数；`x/relation/stat?vmid=` 可用。实测黑马程序员 506 万粉 |
 | **直链不需要 cookie** | `/x/player/wbi/playurl` 返回 `code=0, dash=true`。实测下载 3 MB/s |
 | **一次请求带 3 个候选地址** | 主地址 + 2 个备用 CDN，天然冗余，不需要第三方 |
 | **风控计数单位是 IP** | 同一 IP 连续约 30 次请求开始 412。「开 8 个 agent 并行」= 8 倍速送进冷却 |
@@ -97,7 +100,8 @@ git clone https://github.com/admiremaozhuxi/dsh-bili-learn.git
 |---|---|
 | `bili_learn` | 按主题批量采集：搜索 → 按播放量排序 → 抓字幕/评论 → 落盘 |
 | `bili_study` | **一键全流程**：采集 + 派子 agent 并行研读 + 合并简报 |
-| `bili_watch` | 单条 BV 号深度抓取，不用搜索 |
+| `bili_watch` | 单条 BV 号深度抓取，不用搜索。多集课程可指定第几集（`p`）；评论可翻页、可取二级评论 |
+| `bili_series` | **看整个系列**：网课/系列课的全部分P清单、UP 主资料、整片统计，可探测哪几集有字幕 |
 | `bili_frames` | **看画面**：抽帧 + 视觉模型，读 PPT、屏幕代码、界面状态 |
 | `bili_transcribe` | **声音转文字**：没字幕时把口播转成文字，不用登录 |
 | `bili_sources` | **查来源**：现在哪些来源能用、多快，用于决定采集计划 |
