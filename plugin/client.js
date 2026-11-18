@@ -13,7 +13,7 @@
  * token so the panel follows light and dark on its own.
  */
 window.__ModuleLoader__.load({
-  id: '@local/dsh-bili-learn',
+  id: 'dsh-bili-learn',
   factory(require) {
     const React = require('react')
     const h = React.createElement
