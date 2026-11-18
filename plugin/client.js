@@ -993,7 +993,8 @@ window.__ModuleLoader__.load({
       apply(ctx) {
         ctx.slots.inject('sidebar.panellist', () =>
           ctx.slots.register(
-            { name: 'sidebar.panellist', id: 'bili-learn', order: 25, label: 'B站视频小工具' },
+            // 侧边栏空间紧，用简称；插件名和面板标题仍是「B站视频小工具」
+            { name: 'sidebar.panellist', id: 'bili-learn', order: 25, label: 'B站小工具' },
             Icon,
           ),
         )
