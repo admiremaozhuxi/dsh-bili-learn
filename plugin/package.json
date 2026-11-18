@@ -1,5 +1,5 @@
 {
-  "name": "@local/dsh-bili-learn",
+  "name": "dsh-bili-learn",
   "version": "0.1.0",
   "private": true,
   "type": "module",
