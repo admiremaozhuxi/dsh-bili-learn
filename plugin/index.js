@@ -50,6 +50,8 @@ const DEFAULT_SETTINGS = {
   cookie: '',
   proxies: [],
   gapMs: 1200,
+  disabledSources: [],
+  customSources: [],
 }
 
 /* ------------------------------------------------------------------ settings */
@@ -961,9 +963,10 @@ function registerTools(ctx) {
       },
       async execute(args) {
         if (args.refresh || !sourceState.at) await probeAll()
+        const list = effectiveSources(await loadSettings())
         const pick = (kind) =>
           sourceState.items
-            .map((r) => ({ ...r, kind: (SOURCES.find((s) => s.id === r.id) || {}).kind }))
+            .map((r) => ({ ...r, kind: (list.find((s) => s.id === r.id) || {}).kind }))
             .filter((r) => r.kind === kind)
             .map((r) => ({ id: r.id, name: r.name, ok: r.ok, ms: r.ms, note: r.note }))
         const api = pick('api').concat(pick('self'))
@@ -994,12 +997,12 @@ function registerTools(ctx) {
  * with no media links and require a captcha click), but a subagent driving a
  * browser can use one. That is the point of them: not an API, an exit IP.
  */
-const SOURCES = [
+const BUILTIN_SOURCES = [
   { id: 'self', kind: 'self', name: '自己的服务器', note: '最稳，把请求放在服务器上' },
   { id: 'wbi', kind: 'api', name: '直连（签名接口）', note: '官方接口，受本机 IP 配额影响' },
   { id: 'plain', kind: 'api', name: '直连（普通接口）', note: '官方接口，偶尔比签名版更快' },
   { id: 'vtool', kind: 'web', name: 'vtool.pro', url: 'https://vtool.pro/bilibili.html', note: '打开最快，约 1 秒' },
-  { id: 'v2ob', kind: 'web', name: 'v2ob.com', url: 'https://v2ob.com/', note: '约 1.2 秒' },
+  { id: 'v2ob', kind: 'web', name: 'v2ob.com', url: 'https://v2ob.com/', note: '约 1.2 秒，已验证可走通' },
   { id: 'iiilab', kind: 'web', name: 'iiilab', url: 'https://bilibili.iiilab.com/', note: '约 4.8 秒，功能全' },
   { id: 'zhouql', kind: 'web', name: 'zhouql.vip', url: 'http://zhouql.vip/bilibili/', note: '极简，支持弹幕封面' },
   { id: 'videofk', kind: 'web', name: 'videofk.com', url: 'https://www.videofk.com/', note: '能用但慢' },
@@ -1007,6 +1010,20 @@ const SOURCES = [
   { id: 'xbeibeix', kind: 'web', name: 'xbeibeix', url: 'https://xbeibeix.com/api/bilibili/', note: '很慢，常超时' },
   { id: '6li6', kind: 'web', name: '6li6.com', url: 'https://6li6.com/bilibili', note: '很慢' },
 ]
+
+/** 内置 + 用户自加 − 用户禁用。面板改动立刻反映到探测与竞速。 */
+function effectiveSources(settings) {
+  const disabled = new Set((settings && settings.disabledSources) || [])
+  const custom = ((settings && settings.customSources) || []).map((s) => ({
+    id: s.id,
+    kind: 'web',
+    name: s.name || s.id,
+    url: s.url,
+    note: '自定义',
+    custom: true,
+  }))
+  return [...BUILTIN_SOURCES, ...custom].filter((s) => !disabled.has(s.id))
+}
 
 const SOURCES_FILE = path.join(homedir(), '.dsh-bili-learn', 'sources.json')
 let sourceState = { at: 0, items: [] }
@@ -1055,8 +1072,13 @@ async function probeOne(src, timeoutMs = 5000) {
 }
 
 async function probeAll() {
-  const results = await Promise.all(SOURCES.map((s) => probeOne(s)))
-  sourceState = { at: Date.now(), items: results.map((r) => ({ ...r, name: (SOURCES.find((s) => s.id === r.id) || {}).name || r.id })) }
+  const settings = await loadSettings()
+  const list = effectiveSources(settings)
+  const results = await Promise.all(list.map((s) => probeOne(s)))
+  sourceState = {
+    at: Date.now(),
+    items: results.map((r) => ({ ...r, name: (list.find((s) => s.id === r.id) || {}).name || r.id })),
+  }
   try {
     await writeFile(SOURCES_FILE, JSON.stringify(sourceState, null, 2), 'utf8')
   } catch {
@@ -1255,6 +1277,8 @@ function registerHttpApi(ctx) {
     endpoint: s.endpoint || '',
     hasCookie: Boolean(s.cookie),
     settingsFile: SETTINGS_FILE,
+    disabledSources: s.disabledSources || [],
+    customSources: s.customSources || [],
   })
 
   ctx.inject(['webServer'], (c) => {
@@ -1303,6 +1327,21 @@ function registerHttpApi(ctx) {
                 }
                 if (typeof patch.endpoint === 'string') cleanPatch.endpoint = patch.endpoint.trim()
                 if (typeof patch.cookie === 'string') cleanPatch.cookie = patch.cookie.trim()
+                if (Array.isArray(patch.disabledSources)) {
+                  cleanPatch.disabledSources = patch.disabledSources
+                    .filter((x) => typeof x === 'string')
+                    .slice(0, 60)
+                }
+                if (Array.isArray(patch.customSources)) {
+                  cleanPatch.customSources = patch.customSources
+                    .filter((x) => x && typeof x.url === 'string' && /^https?:\/\//i.test(x.url))
+                    .map((x) => ({
+                      id: String(x.id || x.url).slice(0, 60),
+                      name: String(x.name || '').slice(0, 40),
+                      url: String(x.url).slice(0, 300),
+                    }))
+                    .slice(0, 30)
+                }
               }
               const s = await saveSettings(cleanPatch)
               return Response.json({ ok: true, settings: view(s) })
@@ -1355,7 +1394,7 @@ function registerHttpApi(ctx) {
               at: sourceState.at,
               stale: !sourceState.at || Date.now() - sourceState.at > 10 * 60 * 1000,
               items: sourceState.items,
-              all: SOURCES.map((s) => ({
+              all: effectiveSources(await loadSettings()).map((s) => ({
                 id: s.id,
                 kind: s.kind,
                 name: s.name,

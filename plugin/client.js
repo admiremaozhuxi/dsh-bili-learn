@@ -113,6 +113,29 @@ window.__ModuleLoader__.load({
       )
     }
 
+    /** 输入框：与主题一致，聚焦时描边变品牌色。 */
+    function TextInput(props) {
+      return h('input', {
+        type: 'text',
+        value: props.value,
+        placeholder: props.placeholder,
+        onChange: (e) => props.onChange(e.target.value),
+        spellCheck: false,
+        style: {
+          width: '100%',
+          boxSizing: 'border-box',
+          fontFamily: props.mono ? MONO : SANS,
+          fontSize: 12.5,
+          color: V.text,
+          background: V.sunken,
+          border: `1px solid ${V.line}`,
+          borderRadius: 6,
+          padding: '7px 10px',
+          outline: 'none',
+        },
+      })
+    }
+
     /* ------------------------------------------------------------------ data */
 
     const MODES = [
@@ -180,6 +203,11 @@ window.__ModuleLoader__.load({
       const [qrPhase, setQrPhase] = useState('idle') // idle|waiting|scanned|success|expired|error
       const [qrMsg, setQrMsg] = useState('')
       const [login, setLogin] = useState(null) // { ok, name }
+      const [endpoint, setEndpoint] = useState('')
+      const [disabled, setDisabled] = useState([])
+      const [custom, setCustom] = useState([])
+      const [newName, setNewName] = useState('')
+      const [newUrl, setNewUrl] = useState('')
 
       const refreshLogin = async () => {
         try {
@@ -291,6 +319,9 @@ window.__ModuleLoader__.load({
               setMode(d.settings.mode || 'auto')
               setConc(d.settings.concurrency || 4)
               setGap(d.settings.gapMs || 1200)
+              setEndpoint(d.settings.endpoint || '')
+              setDisabled(d.settings.disabledSources || [])
+              setCustom(d.settings.customSources || [])
             }
             setLoaded(true)
           })
@@ -302,7 +333,12 @@ window.__ModuleLoader__.load({
         // 源状态与登录态用缓存/轻查询，不阻塞首屏
         apiGet('/bili-learn/sources')
           .then((d) => {
-            if (alive && d && d.ok) setSources(d)
+            if (!alive) return
+            if (d && d.ok) {
+              setSources(d)
+              // 启动自检要等 6 秒；赶在它之前打开面板时补一次，免得列表是空的
+              if (!d.items || d.items.length === 0) loadSources(true)
+            }
           })
           .catch(() => {})
         refreshLogin()
@@ -314,7 +350,14 @@ window.__ModuleLoader__.load({
       const save = async () => {
         setStatus('saving')
         try {
-          const d = await apiPost('/bili-learn/settings', { mode, concurrency: conc, gapMs: gap })
+          const d = await apiPost('/bili-learn/settings', {
+            mode,
+            concurrency: conc,
+            gapMs: gap,
+            endpoint,
+            disabledSources: disabled,
+            customSources: custom,
+          })
           if (d && d.ok) {
             setStatus('saved')
             setTimeout(() => setStatus(''), 2000)
@@ -336,6 +379,37 @@ window.__ModuleLoader__.load({
           setTestResult({ ok: false, error: String(err.message || err) })
         }
         setTesting(false)
+      }
+
+      const toggleSource = (id) => {
+        setStatus('')
+        setDisabled((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
+      }
+
+      const addCustom = () => {
+        const url = newUrl.trim()
+        if (!/^https?:\/\//i.test(url)) {
+          setStatus('error')
+          return
+        }
+        let host = url
+        try {
+          host = new URL(url).host
+        } catch {
+          /* 用原串 */
+        }
+        const id = 'custom:' + url.replace(/[^a-zA-Z0-9]/g, '').slice(0, 44)
+        if (custom.some((s) => s.id === id)) return
+        setCustom([...custom, { id, name: newName.trim() || host, url }])
+        setNewName('')
+        setNewUrl('')
+        setStatus('')
+      }
+
+      const removeCustom = (id) => {
+        setCustom(custom.filter((s) => s.id !== id))
+        setDisabled(disabled.filter((x) => x !== id))
+        setStatus('')
       }
 
       /* -------------------------------------------------------------- settings */
@@ -497,6 +571,113 @@ window.__ModuleLoader__.load({
               ),
             )
           : null,
+
+        // ── 自己的服务器 ──
+        h(Label, null, '自己的服务器（可选）'),
+        h(
+          'div',
+          {
+            style: {
+              background: V.card, border: `1px solid ${V.line}`, borderRadius: 8,
+              padding: '12px 14px', marginBottom: 20,
+            },
+          },
+          h('div', { style: { fontSize: 12, color: V.sub, lineHeight: 1.7, marginBottom: 9 } },
+            '有服务器就填地址，取视频的请求会走它，本机不消耗配额。没有就留空，不影响其他功能。'),
+          h(TextInput, {
+            value: endpoint,
+            onChange: (v) => { setEndpoint(v); setStatus('') },
+            placeholder: 'http://你的地址:8848（留空则不用）',
+            mono: true,
+          }),
+          endpoint
+            ? h('div', { style: { fontSize: 11.5, color: V.sub, marginTop: 7 } },
+                '填好后选「走自己的服务器」或让「全自动」优先用它。服务器上跑 ',
+                h('span', { style: { fontFamily: MONO, color: V.text } }, 'tools/parse_svc.py'),
+                ' 即可。')
+            : null,
+        ),
+
+        // ── 第三方网站 ──
+        h(Label, null, '第三方网站'),
+        h(
+          'div',
+          {
+            style: {
+              background: V.card, border: `1px solid ${V.line}`, borderRadius: 8,
+              padding: '12px 14px', marginBottom: 20,
+            },
+          },
+          h('div', { style: { fontSize: 12, color: V.sub, lineHeight: 1.7, marginBottom: 10 } },
+            '这些站有各自的出口 IP，被限流时可以派子 agent 用浏览器走它们。打勾表示启用。'),
+          (sources && sources.all ? sources.all.filter((s) => s.kind === 'web') : []).map((s, i, arr) =>
+            h(
+              'label',
+              {
+                key: s.id,
+                style: {
+                  display: 'grid', gridTemplateColumns: '16px 1fr auto', gap: 9,
+                  alignItems: 'center', padding: '6px 0',
+                  borderBottom: i === arr.length - 1 ? 'none' : `1px solid ${V.line}`,
+                  cursor: 'pointer',
+                },
+              },
+              h('input', {
+                type: 'checkbox',
+                checked: !disabled.includes(s.id),
+                onChange: () => toggleSource(s.id),
+                style: { accentColor: V.brand, margin: 0 },
+              }),
+              h('div', { style: { minWidth: 0 } },
+                h('div', { style: { fontSize: 12.5, color: disabled.includes(s.id) ? V.sub : V.text } }, s.name),
+                h('div', { style: { fontSize: 11, color: V.sub, marginTop: 1 } }, s.note || ''),
+              ),
+              h('span', { style: { fontFamily: MONO, fontSize: 10.5, color: V.sub } },
+                disabled.includes(s.id) ? '已停用' : '启用'),
+            ),
+          ),
+          // 自定义站点
+          custom.length
+            ? h('div', { style: { marginTop: 4 } },
+                custom.map((s) =>
+                  h(
+                    'div',
+                    {
+                      key: s.id,
+                      style: {
+                        display: 'grid', gridTemplateColumns: '16px 1fr auto', gap: 9,
+                        alignItems: 'center', padding: '6px 0', borderTop: `1px solid ${V.line}`,
+                      },
+                    },
+                    h('span', {
+                      style: {
+                        width: 7, height: 7, borderRadius: '50%', justifySelf: 'center',
+                        background: V.brand,
+                      },
+                    }),
+                    h('div', { style: { minWidth: 0 } },
+                      h('div', { style: { fontSize: 12.5, color: V.text } }, s.name),
+                      h('div', {
+                        style: {
+                          fontFamily: MONO, fontSize: 10.5, color: V.sub,
+                          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                        },
+                      }, s.url),
+                    ),
+                    h(Button, { onClick: () => removeCustom(s.id) }, '删除'),
+                  ),
+                ),
+              )
+            : null,
+          // 添加
+          h(
+            'div',
+            { style: { display: 'grid', gridTemplateColumns: '1fr 1.6fr auto', gap: 8, marginTop: 10 } },
+            h(TextInput, { value: newName, onChange: setNewName, placeholder: '名称（可留空）' }),
+            h(TextInput, { value: newUrl, onChange: setNewUrl, placeholder: 'https://...', mono: true }),
+            h(Button, { onClick: addCustom, disabled: !/^https?:\/\//i.test(newUrl.trim()) }, '添加'),
+          ),
+        ),
 
         h(
           'div',
