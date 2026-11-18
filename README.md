@@ -106,6 +106,50 @@ curl "http://127.0.0.1:8848/playurl?bvid=BV1xx&cid=123"
 
 ---
 
+## 画面路径：让 AI 真正「看到」画面
+
+字幕只覆盖 UP 主说的话。PPT、屏幕上的代码、界面变化、游戏操作、实物演示全都不在字幕里 —— 而字幕覆盖率只有约 11%。`bili_frames` 补的就是这块。
+
+原理：`playurl` 拿**最低码率**视频轨（不需要登录）→ ffmpeg 抽帧 → 感知哈希去重 → 视觉模型逐帧描述。
+
+实测一条 43 秒的《王者荣耀》视频（最低码率只 0.89 MB）：
+
+```
+[00:00] 屏幕上「15 vs 5」的比分，一名 11 级英雄正在攻击 8 级英雄
+[00:15] 多名英雄团战，左上角是双方击杀数与游戏时间
+[00:30] 蓝色龙形生物攻击防御塔，角色等级 9，塔上方显示「免疫」
+```
+
+这些信息**字幕里一个字都没有**。
+
+借鉴的开源方案：
+
+| 项目 | 借的点 |
+|---|---|
+| [bilibili-video-summary](https://github.com/bfftp0502/bilibili-video-summary) | 跳帧 OCR 做画面补充，并自动剔除 UP 主名、水印等噪声 |
+| [video-frames-skill](https://github.com/mugnimaestra/video-frames-skill) | 场景变化检测抽帧、`--max-frames` 控制 token 预算 |
+| [SKILL_bilibili-watch](https://github.com/VZService/SKILL_bilibili-watch) | 明确区分文本路径与画面路径，且画面路径不需要登录 |
+
+用法（插件工具）：
+
+```
+bili_frames({ bvid: "BV1fAZtYoEnW", maxFrames: 8 })
+bili_frames({ bvid: "BV1xx", prompt: "只读屏幕上的代码和终端输出" })
+```
+
+命令行同样可用：
+
+```bash
+python tools/video_frames.py --bvid BV1fAZtYoEnW --max-frames 8
+python tools/video_frames.py --bvid BV1xx --prompt "只读屏幕上的代码"
+```
+
+**成本**：每帧一次视觉模型调用，默认 8 帧。先小后大 —— 第一遍漏了再提高帧数，比拼数量便宜。
+
+**依赖**：`imageio-ffmpeg`（自带 ffmpeg 二进制，不用装系统 ffmpeg）+ `Pillow`。
+
+---
+
 ## 关于字幕
 
 这是唯一的硬约束：**字幕需要登录态**。实测无 cookie 时，`player/wbi/v2` 返回 `code=0` 但字幕数组为空，连 `ai_status` 字段都不返回 —— B 站把整个字幕对象阉割了，所以「拿 AI 字幕免登录」这条路不存在。

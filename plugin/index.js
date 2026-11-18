@@ -13,9 +13,13 @@
  *    throttled and retried with backoff.
  */
 import { createHash } from 'node:crypto'
+import { execFile } from 'node:child_process'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import path from 'node:path'
+import { promisify } from 'node:util'
+
+const run = promisify(execFile)
 
 const API = 'https://api.bilibili.com'
 const UA =
@@ -45,6 +49,9 @@ const DEFAULT_SETTINGS = {
   cookie: '',
   proxies: [],
   gapMs: 1200,
+  // 画面路径：python 解释器与抽帧脚本的位置，留空则用默认推断
+  pythonPath: '',
+  framesScript: '',
 }
 
 /* ------------------------------------------------------------------ settings */
@@ -757,6 +764,105 @@ function registerTools(ctx) {
           comments: comments.items.length,
           file,
           preview: subs.lines.slice(0, 12).map((l) => l.text).join('\n'),
+        }
+      },
+    }),
+  )
+
+  /* --------------------------------------------------------------- frames */
+  ctx.effect(() =>
+    ctx.tools.register({
+      name: 'bili_frames',
+      description:
+        'Look at what is actually on screen in a Bilibili video. Downloads the lowest-bitrate video ' +
+        'track, extracts frames, and has a vision model describe each one with a timestamp. ' +
+        'Subtitles only carry what the uploader said; this carries what was shown: slides, code on ' +
+        'screen, UI states, gameplay, physical demonstrations. Use it when the request depends on ' +
+        'visual content that a transcript cannot describe. Each frame costs one vision call, so keep ' +
+        'maxFrames small and raise it only when the first pass misses something.',
+      parameters: {
+        type: 'object',
+        properties: {
+          bvid: { type: 'string', description: 'BV id, e.g. BV1fAZtYoEnW.' },
+          maxFrames: {
+            type: 'integer',
+            description: 'How many distinct frames to look at. Default 8, maximum 16. One vision call per frame.',
+          },
+          interval: {
+            type: 'integer',
+            description: 'Seconds between sampled frames. Omit to derive it from duration and maxFrames.',
+          },
+          prompt: {
+            type: 'string',
+            description:
+              'What the vision model should pull out, e.g. "只读屏幕上的代码和终端输出". Defaults to a general scene description.',
+          },
+        },
+        required: ['bvid'],
+      },
+      output: {
+        schema: {
+          type: 'object',
+          properties: {
+            ok: { type: 'boolean' },
+            bvid: { type: 'string' },
+            frames: { type: 'integer' },
+            markdown: { type: 'string' },
+            log: { type: 'string' },
+            note: { type: 'string' },
+          },
+        },
+        render(args, value) {
+          if (!value?.ok) return textBlock(`bili_frames 失败：${value?.note || '未知原因'}`)
+          return textBlock(
+            `${value.bvid}：看了 ${value.frames} 帧\n\n${value.markdown}${value.log ? `\n\n---\n${value.log}` : ''}`,
+          )
+        },
+      },
+      async execute(args) {
+        const s = await loadSettings()
+        const bvid = String(args.bvid || '').trim()
+        if (!/^BV[0-9A-Za-z]+$/.test(bvid)) {
+          return { ok: false, bvid, note: 'invalid bvid', frames: 0, markdown: '' }
+        }
+        const script =
+          s.framesScript || path.join(homedir(), '.dsh-bili-learn', 'tools', 'video_frames.py')
+        const python = s.pythonPath || (process.platform === 'win32' ? 'python' : 'python3')
+        const n = Math.min(Math.max(Number(args.maxFrames) || 8, 1), 16)
+        const argv = [script, '--bvid', bvid, '--max-frames', String(n)]
+        if (args.interval) argv.push('--interval', String(Math.max(1, Number(args.interval))))
+        if (args.prompt) argv.push('--prompt', String(args.prompt))
+
+        try {
+          const { stdout, stderr } = await run(python, argv, {
+            timeout: 600000,
+            maxBuffer: 16 * 1024 * 1024,
+            windowsHide: true,
+          })
+          const frames = (stdout.match(/^### \[/gm) || []).length
+          return {
+            ok: true,
+            bvid,
+            frames,
+            markdown: String(stdout).trim(),
+            log: String(stderr || '')
+              .split('\n')
+              .filter((l) => l.startsWith('[i]') || l.startsWith('[✓]'))
+              .slice(-6)
+              .join('\n'),
+          }
+        } catch (err) {
+          const out = String(err?.stdout || '').trim()
+          return {
+            ok: false,
+            bvid,
+            frames: 0,
+            markdown: out,
+            note:
+              `抽帧脚本执行失败：${String(err?.message || err).slice(0, 200)}。` +
+              `脚本路径 ${script}，解释器 ${python}。` +
+              '需要 Python 侧装有 imageio-ffmpeg 与 Pillow，且脚本已复制到该路径。',
+          }
         }
       },
     }),
