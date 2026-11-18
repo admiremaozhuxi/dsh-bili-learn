@@ -867,9 +867,151 @@ function registerTools(ctx) {
       },
     }),
   )
+
+  /* -------------------------------------------------------------- sources */
+  ctx.effect(() =>
+    ctx.tools.register({
+      name: 'bili_sources',
+      description:
+        'Report which fetch sources are reachable right now: the official API paths, an optional self-hosted ' +
+        'server, and human-facing parser sites. The sites matter even though they cannot be called over plain ' +
+        'HTTP — each carries its own egress IP, so a subagent driving a browser through one spreads load away ' +
+        'from this machine. Call this before a large harvest to pick a plan, or after repeated 412s to find a ' +
+        'route that still answers. Pass refresh to re-probe instead of reading the cache.',
+      parameters: {
+        type: 'object',
+        properties: {
+          refresh: { type: 'boolean', description: 'Re-probe every source now instead of using the cache.' },
+        },
+        required: [],
+      },
+      output: {
+        schema: {
+          type: 'object',
+          properties: {
+            ok: { type: 'boolean' },
+            at: { type: 'string' },
+            api: { type: 'array', items: { type: 'object' } },
+            web: { type: 'array', items: { type: 'object' } },
+            advice: { type: 'string' },
+          },
+        },
+        render(args, value) {
+          if (!value?.ok) return textBlock('源状态读取失败')
+          const line = (r) =>
+            `${r.ok ? '在线' : '不可用'}  ${String(r.ms).padStart(5)}ms  ${r.name}${r.note ? ' — ' + r.note : ''}`
+          const parts = ['接口类（可自动竞速）', ...value.api.map((r) => '  ' + line(r))]
+          parts.push('', '网页类（有独立出口 IP，需子 agent 用浏览器操作）')
+          parts.push(...value.web.map((r) => '  ' + line(r)))
+          if (value.advice) parts.push('', value.advice)
+          return textBlock(parts.join('\n'))
+        },
+      },
+      async execute(args) {
+        if (args.refresh || !sourceState.at) await probeAll()
+        const pick = (kind) =>
+          sourceState.items
+            .map((r) => ({ ...r, kind: (SOURCES.find((s) => s.id === r.id) || {}).kind }))
+            .filter((r) => r.kind === kind)
+            .map((r) => ({ id: r.id, name: r.name, ok: r.ok, ms: r.ms, note: r.note }))
+        const api = pick('api').concat(pick('self'))
+        const web = pick('web')
+        const liveWeb = web.filter((r) => r.ok).map((r) => r.name)
+        const apiOk = api.some((r) => r.ok)
+        const advice = apiOk
+          ? `接口类可用，正常采集即可。${liveWeb.length ? `另有 ${liveWeb.length} 个网页源在线，需要分摊风险时可派子 agent 走 ${liveWeb[0]}。` : ''}`
+          : `接口类全部不可用。派子 agent 用浏览器打开 ${liveWeb[0] || '任一网页源'} 解析，或稍后重试。`
+        return { ok: true, at: new Date(sourceState.at).toISOString(), api, web, advice }
+      },
+    }),
+  )
 }
 
-/* ------------------------------------------------------------------ commands */
+/* ------------------------------------------------------------------ sources */
+
+/**
+ * Source registry.
+ *
+ * Three kinds, because they fail differently:
+ *   api  — speaks JSON, can join the automatic race, limited by our own IP quota
+ *   web  — a human-facing page; it carries its own egress IP, so it is the only
+ *          way to spread risk for users who have no server of their own
+ *   self — a self-hosted parser, optional and never required
+ *
+ * `web` sources cannot be automated over plain HTTP (measured: they answer 200
+ * with no media links and require a captcha click), but a subagent driving a
+ * browser can use one. That is the point of them: not an API, an exit IP.
+ */
+const SOURCES = [
+  { id: 'self', kind: 'self', name: '自己的服务器', note: '最稳，把请求放在服务器上' },
+  { id: 'wbi', kind: 'api', name: '直连（签名接口）', note: '官方接口，受本机 IP 配额影响' },
+  { id: 'plain', kind: 'api', name: '直连（普通接口）', note: '官方接口，偶尔比签名版更快' },
+  { id: 'vtool', kind: 'web', name: 'vtool.pro', url: 'https://vtool.pro/bilibili.html', note: '打开最快，约 1 秒' },
+  { id: 'v2ob', kind: 'web', name: 'v2ob.com', url: 'https://v2ob.com/', note: '约 1.2 秒' },
+  { id: 'iiilab', kind: 'web', name: 'iiilab', url: 'https://bilibili.iiilab.com/', note: '约 4.8 秒，功能全' },
+  { id: 'zhouql', kind: 'web', name: 'zhouql.vip', url: 'http://zhouql.vip/bilibili/', note: '极简，支持弹幕封面' },
+  { id: 'videofk', kind: 'web', name: 'videofk.com', url: 'https://www.videofk.com/', note: '能用但慢' },
+  { id: 'snapany', kind: 'web', name: 'snapany', url: 'https://snapany.com/zh/bilibili', note: '可选' },
+  { id: 'xbeibeix', kind: 'web', name: 'xbeibeix', url: 'https://xbeibeix.com/api/bilibili/', note: '很慢，常超时' },
+  { id: '6li6', kind: 'web', name: '6li6.com', url: 'https://6li6.com/bilibili', note: '很慢' },
+]
+
+const SOURCES_FILE = path.join(homedir(), '.dsh-bili-learn', 'sources.json')
+let sourceState = { at: 0, items: [] }
+
+async function probeOne(src, timeoutMs = 5000) {
+  const started = Date.now()
+  try {
+    if (src.kind === 'self') {
+      const s = await loadSettings()
+      if (!s.endpoint) return { id: src.id, ok: false, ms: 0, note: '未配置' }
+      const hlt = await selfHealth(s.endpoint)
+      return { id: src.id, ok: Boolean(hlt.ok), ms: Date.now() - started, note: hlt.ok ? '在线' : '连不上' }
+    }
+    if (src.kind === 'api') {
+      const s = await loadSettings()
+      const nav = await getJson(`${API}/x/web-interface/nav`, { cookie: s.cookie || '', gapMs: 300 })
+      const ok = nav?.code === 0 || nav?.code === -101
+      return {
+        id: src.id,
+        ok,
+        ms: Date.now() - started,
+        note: ok ? `登录态 ${nav?.data?.isLogin ? '有效' : '未登录'}` : `被拦（${nav?.code ?? '?'}）`,
+      }
+    }
+    // web 源：只看站点是否活着，以及多快。能否出直链要人点，这里不测。
+    const ctl = new AbortController()
+    const timer = setTimeout(() => ctl.abort(), timeoutMs)
+    let status = 0
+    try {
+      const res = await fetch(src.url, {
+        method: 'GET',
+        headers: { 'User-Agent': UA, Accept: 'text/html,*/*' },
+        signal: ctl.signal,
+        redirect: 'follow',
+      })
+      status = res.status
+      await res.body?.cancel?.()
+    } finally {
+      clearTimeout(timer)
+    }
+    const ok = status >= 200 && status < 400
+    return { id: src.id, ok, ms: Date.now() - started, note: ok ? '页面在线' : `HTTP ${status}` }
+  } catch (err) {
+    return { id: src.id, ok: false, ms: Date.now() - started, note: String(err).slice(0, 60) }
+  }
+}
+
+async function probeAll() {
+  const results = await Promise.all(SOURCES.map((s) => probeOne(s)))
+  sourceState = { at: Date.now(), items: results.map((r) => ({ ...r, name: (SOURCES.find((s) => s.id === r.id) || {}).name || r.id })) }
+  try {
+    await writeFile(SOURCES_FILE, JSON.stringify(sourceState, null, 2), 'utf8')
+  } catch {
+    /* 写不了就算了，内存里的还能用 */
+  }
+  return sourceState
+}
 
 /**
  * One operation, two callers: the panel button and the /bili command both go
@@ -1147,12 +1289,41 @@ function registerHttpApi(ctx) {
       }),
     )
 
+    c.effect(() =>
+      c.webServer.register({
+        kind: 'exact',
+        path: '/bili-learn/sources',
+        resource: async (request) => {
+          try {
+            const url = new URL(request.url, 'http://127.0.0.1')
+            const refresh = url.searchParams.get('refresh') === '1'
+            if (refresh) await probeAll()
+            return Response.json({
+              ok: true,
+              at: sourceState.at,
+              stale: !sourceState.at || Date.now() - sourceState.at > 10 * 60 * 1000,
+              items: sourceState.items,
+              all: SOURCES.map((s) => ({
+                id: s.id,
+                kind: s.kind,
+                name: s.name,
+                note: s.note,
+                url: s.url || '',
+              })),
+            })
+          } catch (err) {
+            return Response.json({ ok: false, error: String(err).slice(0, 200) }, { status: 500 })
+          }
+        },
+      }),
+    )
+
     writeDiag({
       at: new Date().toISOString(),
       stage: 'registered',
       webServer: true,
       origin,
-      routes: ['/bili-learn/settings', '/bili-learn/test'],
+      routes: ['/bili-learn/settings', '/bili-learn/test', '/bili-learn/sources'],
     })
   })
 }
@@ -1163,4 +1334,12 @@ export function apply(ctx) {
   registerTools(ctx)
   registerCommands(ctx)
   registerHttpApi(ctx)
+
+  // 启动后延迟自检一遍源，别拖慢插件激活；失败也不影响任何工具
+  ctx.effect(() => {
+    const timer = setTimeout(() => {
+      probeAll().catch(() => {})
+    }, 6000)
+    return () => clearTimeout(timer)
+  })
 }

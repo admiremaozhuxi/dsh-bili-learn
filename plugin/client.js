@@ -172,6 +172,20 @@ window.__ModuleLoader__.load({
       const [testResult, setTestResult] = useState(null)
       const [testing, setTesting] = useState(false)
       const [copied, setCopied] = useState('')
+      const [sources, setSources] = useState(null)
+      const [probing, setProbing] = useState(false)
+
+      const loadSources = async (refresh) => {
+        setProbing(true)
+        try {
+          const d = await apiGet('/bili-learn/sources' + (refresh ? '?refresh=1' : ''))
+          if (d && d.ok) setSources(d)
+          else setSources({ ok: false, error: (d && d.error) || '未知错误' })
+        } catch (err) {
+          setSources({ ok: false, error: String(err.message || err) })
+        }
+        setProbing(false)
+      }
 
       // 仅在本地接口不可用时使用：把同样的改动做成一条命令
       const copyCommand = async (text) => {
@@ -211,6 +225,12 @@ window.__ModuleLoader__.load({
             setLoadError(String(err.message || err))
             setLoaded(true)
           })
+        // 源状态用缓存，不阻塞首屏
+        apiGet('/bili-learn/sources')
+          .then((d) => {
+            if (alive && d && d.ok) setSources(d)
+          })
+          .catch(() => {})
         return () => {
           alive = false
         }
@@ -450,6 +470,56 @@ window.__ModuleLoader__.load({
       const statusView = h(
         'div',
         null,
+        h(Label, null, '可用来源（插件启动时会自动测一遍）'),
+        h(
+          'div',
+          { style: { background: V.card, border: `1px solid ${V.line}`, borderRadius: 8, padding: '11px 13px', marginBottom: 8 } },
+          !sources
+            ? h('div', { style: { fontSize: 12.5, color: V.sub } }, probing ? '检测中…' : '还没测过')
+            : !sources.ok
+              ? h('div', { style: { fontSize: 12.5, color: V.warn } }, '测不了：' + (sources.error || ''))
+              : h(
+                  'div',
+                  null,
+                  h(
+                    'div',
+                    { style: { fontSize: 11.5, color: V.sub, marginBottom: 8 } },
+                    '接口类（能自动用）',
+                  ),
+                  (sources.items || []).filter((r) => {
+                    const a = (sources.all || []).find((x) => x.id === r.id)
+                    return a && (a.kind === 'api' || a.kind === 'self')
+                  }).map((r) =>
+                    h(
+                      'div',
+                      { key: r.id, style: { display: 'grid', gridTemplateColumns: '8px 1fr auto', gap: 9, alignItems: 'center', padding: '3px 0', fontSize: 12.5 } },
+                      h('span', { style: { width: 7, height: 7, borderRadius: '50%', background: r.ok ? V.ok : V.err } }),
+                      h('span', { style: { color: r.ok ? V.text : V.sub } }, r.name),
+                      h('span', { style: { fontFamily: MONO, fontSize: 11, color: V.sub } },
+                        r.ok ? r.ms + 'ms' : (r.note || '不可用')),
+                    ),
+                  ),
+                  h('div', { style: { fontSize: 11.5, color: V.sub, margin: '10px 0 8px' } },
+                    '网页类（有自己的出口 IP，需要时派子 agent 用浏览器打开）'),
+                  (sources.items || []).filter((r) => {
+                    const a = (sources.all || []).find((x) => x.id === r.id)
+                    return a && a.kind === 'web'
+                  }).map((r) =>
+                    h(
+                      'div',
+                      { key: r.id, style: { display: 'grid', gridTemplateColumns: '8px 1fr auto', gap: 9, alignItems: 'center', padding: '3px 0', fontSize: 12.5 } },
+                      h('span', { style: { width: 7, height: 7, borderRadius: '50%', background: r.ok ? V.ok : V.line } }),
+                      h('span', { style: { color: r.ok ? V.text : V.sub } }, r.name),
+                      h('span', { style: { fontFamily: MONO, fontSize: 11, color: V.sub } },
+                        r.ok ? r.ms + 'ms' : '打不开'),
+                    ),
+                  ),
+                ),
+        ),
+        h('div', { style: { marginBottom: 18 } },
+          h(Button, { onClick: () => loadSources(true), disabled: probing },
+            probing ? '检测中…' : '重新检测所有来源')),
+
         h(Label, null, '分别能拿到什么'),
         h(
           'div',
