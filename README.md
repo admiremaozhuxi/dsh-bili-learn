@@ -118,6 +118,17 @@ curl "http://127.0.0.1:8848/playurl?bvid=BV1xx&cid=123"
 | **手工复制 SESSDATA** | 浏览器 F12 → Application → Cookies → `https://www.bilibili.com` → 复制 `SESSDATA` | 30 秒，写进 `~/.dsh-bili-learn/settings.json` |
 | 复用浏览器 cookie | `python tools/browser_cookie.py` | 仅对旧版浏览器有效：Edge/Chrome 127+ 已改用 **v20 app-bound 加密**，需要 SYSTEM 权限解第一层密钥，用户态解不开（本脚本会给出这个提示而不是静默失败） |
 
+### 不想登录？用音频转写
+
+`python tools/asr_transcribe.py --bvid BVxxx` —— 这条路径**完全不需要登录**。
+
+原理：`playurl` 拿音频直链不需要 cookie（已实测 3 MB/s），拿到音频后走 Whisper / SenseVoice 转文字。
+
+实测：31 秒视频 → 音频 334 KB → 下载 0.3s → SenseVoice 转写 24.4s → 99 字，内容准确。
+
+代价是**慢**：转写耗时约等于音频时长，所以它适合少量关键视频，不适合海量。
+API key 从 `~/.modlens/config.json`、环境变量 `SILICONFLOW_API_KEY`，或 `settings.json` 的 `asrKey` 读取。
+
 ### 第三方方案实测
 
 | 方案 | 结论 |
@@ -127,7 +138,7 @@ curl "http://127.0.0.1:8848/playurl?bvid=BV1xx&cid=123"
 | 浏览器字幕扩展（BiliBili 字幕提取器、Bilitato 等） | 确实能取到字幕，但**靠的是你浏览器里的登录态**，而且要人工在视频页点一下 —— 反过来印证了上面那条结论 |
 | apify `video-subtitle-extractor` | 付费 API（约 $5 / 1000 次），原生字幕优先，没有则走 Whisper。要接商业账号 |
 
-一句话：**字幕这关绕不过登录，区别只在「谁来登录」。**
+一句话：**字幕这关绕不过登录；不想登录，就用音频转写，代价是慢。**
 
 ---
 
