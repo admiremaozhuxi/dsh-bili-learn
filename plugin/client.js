@@ -195,6 +195,7 @@ window.__ModuleLoader__.load({
       const [aMin, setAMin] = useState(2)
       const [aMax, setAMax] = useState(4)
       const [aTotal, setATotal] = useState(12)
+      const [attempts, setAttempts] = useState(30)
       const [gap, setGap] = useState(1200)
       const [advanced, setAdvanced] = useState(false)
       const [status, setStatus] = useState('')   // '' | 'saving' | 'saved' | 'error'
@@ -326,6 +327,7 @@ window.__ModuleLoader__.load({
               setAMin(d.settings.agentsPerVideoMin ?? 2)
               setAMax(d.settings.agentsPerVideoMax ?? 4)
               setATotal(d.settings.maxTotalAgents ?? 12)
+              setAttempts(d.settings.maxAttempts ?? 30)
               setGap(d.settings.gapMs || 1200)
               setEndpoint(d.settings.endpoint || '')
               setDisabled(d.settings.disabledSources || [])
@@ -365,6 +367,7 @@ window.__ModuleLoader__.load({
             agentsPerVideoMin: aMin,
             agentsPerVideoMax: aMax,
             maxTotalAgents: aTotal,
+            maxAttempts: attempts,
             gapMs: gap,
             endpoint,
             disabledSources: disabled,
@@ -606,6 +609,20 @@ window.__ModuleLoader__.load({
         h('div', { style: { fontSize: 11.5, color: V.sub, lineHeight: 1.7, marginBottom: 20 } },
           '短片的 AI 跑完会自动转去帮长片，所以单个视频实际动用的 AI 可能超过上面的区间上限 —— 但同时在跑的总数不会超过这里。'),
 
+        h(Label, null, '最多尝试几个视频'),
+        h(
+          'div',
+          { style: { display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 } },
+          h(Button, { onClick: () => { setAttempts((n) => Math.max(1, n - 1)); setStatus('') }, disabled: attempts <= 1 }, '−'),
+          h('span', {
+            style: { fontFamily: MONO, fontSize: 18, fontWeight: 600, color: V.text, minWidth: 32, textAlign: 'center', fontVariantNumeric: 'tabular-nums' },
+          }, String(attempts)),
+          h(Button, { onClick: () => { setAttempts((n) => Math.min(60, n + 1)); setStatus('') }, disabled: attempts >= 60 }, '+'),
+          h('span', { style: { fontSize: 12, color: V.sub, marginLeft: 4 } }, '个'),
+        ),
+        h('div', { style: { fontSize: 11.5, color: V.sub, lineHeight: 1.7, marginBottom: 20 } },
+          '抓到没有字幕的视频会自动跳过、继续找下一个，不会白占名额。这个值是硬上限，防止一路试到搜索结果的尽头。'),
+
         // 高级：默认收起，避免小白被「毫秒」吓到
         h(
           'button',
@@ -774,10 +791,10 @@ window.__ModuleLoader__.load({
                   borderRadius: 6, fontFamily: MONO, fontSize: 11.5,
                   color: V.text, wordBreak: 'break-all',
                 },
-              }, `/bili set mode=${mode} videos=${conc} agents=${aMin}-${aMax} total=${aTotal} gapMs=${gap}`),
+              }, `/bili set mode=${mode} videos=${conc} agents=${aMin}-${aMax} total=${aTotal} attempts=${attempts} gapMs=${gap}`),
               h(
                 Button,
-                { onClick: () => copyCommand(`/bili set mode=${mode} videos=${conc} agents=${aMin}-${aMax} total=${aTotal} gapMs=${gap}`) },
+                { onClick: () => copyCommand(`/bili set mode=${mode} videos=${conc} agents=${aMin}-${aMax} total=${aTotal} attempts=${attempts} gapMs=${gap}`) },
                 '复制这条命令',
               ),
               h('div', { style: { color: V.sub, marginTop: 6, fontSize: 11.5 } },

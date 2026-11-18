@@ -57,6 +57,8 @@ const DEFAULT_SETTINGS = {
   agentsPerVideoMin: 2,
   agentsPerVideoMax: 4,
   maxTotalAgents: 12,
+  // 采集时最多尝试几个视频。没字幕的会跳过并继续找下一个，这是硬上限
+  maxAttempts: 30,
 }
 
 /* ------------------------------------------------------------------ settings */
@@ -471,11 +473,18 @@ async function harvest(args, settings) {
     for (const it of r.items || []) if (it.bvid && !seen.has(it.bvid)) seen.set(it.bvid, it)
   }
 
-  const ranked = [...seen.values()]
-    .sort((a, b) => (Number(b.play) || 0) - (Number(a.play) || 0))
-    .slice(0, maxVideos)
+  // 候选池要比 maxVideos 宽，才能在遇到无字幕视频时继续往下找。
+  // maxAttempts 同时是硬上限：搜到尽头就停，不会无限试下去。
+  const maxAttempts = Math.min(
+    Math.max(Number(args.maxAttempts) || Number(settings.maxAttempts) || 30, maxVideos),
+    60,
+  )
 
-  if (!ranked.length) {
+  const candidates = [...seen.values()]
+    .sort((a, b) => (Number(b.play) || 0) - (Number(a.play) || 0))
+    .slice(0, maxAttempts)
+
+  if (!candidates.length) {
     return { ok: false, mode: effective, note: `搜索无结果。${errors.join('; ')}`, videos: [], count: 0 }
   }
 
@@ -487,7 +496,13 @@ async function harvest(args, settings) {
 
   const withComments = args.withComments !== false
   const results = []
-  for (const v of ranked) {
+  const skipped = []
+  let tried = 0
+
+  for (const v of candidates) {
+    if (results.length >= maxVideos) break
+    tried += 1
+
     const page = await getCid(v.bvid, opts)
     let subs = { lines: [], trace: 'no_cid' }
     let comments = { items: [], trace: 'skipped' }
@@ -495,6 +510,13 @@ async function harvest(args, settings) {
       subs = await getSubtitles(v.bvid, page.cid, opts)
       if (withComments) comments = await getComments(v.aid, opts, { limit: 20, maxPages: 1 })
     }
+
+    // 没字幕就拿不到正文，跳过它继续找下一个，别让它占掉一个名额。
+    if (!subs.lines.length) {
+      skipped.push({ bvid: v.bvid, title: v.title, play: Number(v.play) || 0, reason: subs.trace })
+      continue
+    }
+
     const record = {
       ...v,
       cid: page?.cid || null,
@@ -519,15 +541,38 @@ async function harvest(args, settings) {
 
   await writeFile(
     path.join(dir, 'index.json'),
-    JSON.stringify({ topic: args.topic, mode: effective, at: new Date().toISOString(), videos: results }, null, 2),
+    JSON.stringify(
+      { topic: args.topic, mode: effective, at: new Date().toISOString(), tried, videos: results, skipped },
+      null,
+      2,
+    ),
     'utf8',
   )
 
-  if (results.every((r) => r.subtitleLines === 0) && !settings.cookie) {
-    notes.push('未配置 SESSDATA，字幕全为空——这是 B 站的行为，不是失败。要正文请在面板配置凭证，或改用音频转写。')
+  // 全部被跳过：试了一圈没有一条有字幕，这是失败而不是成功，要说清楚。
+  if (!results.length) {
+    const why = skipped.length
+      ? `试了 ${tried} 个视频都没有字幕，一条没收到。${
+          settings.cookie ? '这些视频本身没有字幕，可以改用 bili_transcribe 走音频转写。' : '先扫码登录，字幕需要登录态。'
+        }`
+      : `试了 ${tried} 个视频都没取到内容。`
+    return { ok: false, mode: effective, dir, count: 0, tried, skipped, videos: [], note: why }
   }
 
-  return { ok: true, mode: effective, dir, count: results.length, videos: results, note: notes.join(' ') }
+  if (skipped.length) {
+    notes.push(`试了 ${tried} 个，收到 ${results.length} 个，跳过 ${skipped.length} 个没有字幕的。`)
+  }
+
+  return {
+    ok: true,
+    mode: effective,
+    dir,
+    count: results.length,
+    tried,
+    skipped,
+    videos: results,
+    note: notes.join(' '),
+  }
 }
 
 const textBlock = (text) => [{ type: 'text', text }]
@@ -619,6 +664,12 @@ function registerTools(ctx) {
             description: 'Extra search phrases, each a full variant of the intent. Max 4.',
           },
           maxVideos: { type: 'integer', description: 'Videos to harvest in full. Default 8, max 20.' },
+          maxAttempts: {
+            type: 'integer',
+            description:
+              '最多尝试多少个视频。遇到没有字幕的会跳过并继续找下一个，这个值防止一路试到搜索结果的尽头。' +
+              '默认取面板设置（30），必须不小于 maxVideos，上限 60。',
+          },
           withComments: { type: 'boolean', description: 'Also fetch top comments. Default true.' },
         },
         required: ['topic'],
@@ -630,6 +681,8 @@ function registerTools(ctx) {
             ok: { type: 'boolean' },
             dir: { type: 'string' },
             count: { type: 'integer' },
+            tried: { type: 'integer' },
+            skipped: { type: 'array', items: { type: 'object' } },
             mode: { type: 'string' },
             note: { type: 'string' },
             videos: { type: 'array', items: { type: 'object' } },
@@ -917,6 +970,10 @@ function registerTools(ctx) {
             type: 'integer',
             description: '子 agent 总数硬上限。同时在跑的数量不超过它。1-24。',
           },
+          maxAttempts: {
+            type: 'integer',
+            description: '采集时最多尝试几个视频。没字幕的会跳过继续找，这是硬上限。1-60。',
+          },
           endpoint: { type: 'string', description: 'Self-hosted parse service base URL.' },
           cookie: { type: 'string', description: 'Bilibili login cookie, normally the SESSDATA pair.' },
           proxies: { type: 'array', items: { type: 'string' }, description: 'Third-party parser base URLs.' },
@@ -932,6 +989,7 @@ function registerTools(ctx) {
             agentsPerVideoMin: { type: 'integer' },
             agentsPerVideoMax: { type: 'integer' },
             maxTotalAgents: { type: 'integer' },
+            maxAttempts: { type: 'integer' },
             endpoint: { type: 'string' },
             cookieSet: { type: 'boolean' },
             proxies: { type: 'array', items: { type: 'string' } },
@@ -945,6 +1003,7 @@ function registerTools(ctx) {
               `同时阅读视频数：${value.videoConcurrency}`,
               `每个视频分配 AI：${value.agentsPerVideoMin}-${value.agentsPerVideoMax} 个（长的会超过，靠空闲的补）`,
               `AI 总数上限：${value.maxTotalAgents}`,
+              `最多尝试视频数：${value.maxAttempts}`,
               `自建服务器：${value.endpoint}`,
               `登录凭证：${value.cookieSet ? '已配置' : '未配置（字幕为空）'}`,
               `第三方池：${(value.proxies || []).length ? value.proxies.join(', ') : '（空）'}`,
@@ -968,6 +1027,9 @@ function registerTools(ctx) {
         if (args.maxTotalAgents) {
           patch.maxTotalAgents = Math.min(Math.max(Number(args.maxTotalAgents), 1), 24)
         }
+        if (args.maxAttempts) {
+          patch.maxAttempts = Math.min(Math.max(Number(args.maxAttempts), 1), 60)
+        }
         if (patch.agentsPerVideoMin && patch.agentsPerVideoMax && patch.agentsPerVideoMin > patch.agentsPerVideoMax) {
           const lo = patch.agentsPerVideoMin
           patch.agentsPerVideoMin = patch.agentsPerVideoMax
@@ -983,6 +1045,7 @@ function registerTools(ctx) {
           agentsPerVideoMin: s.agentsPerVideoMin ?? 2,
           agentsPerVideoMax: s.agentsPerVideoMax ?? 4,
           maxTotalAgents: s.maxTotalAgents ?? 12,
+          maxAttempts: s.maxAttempts ?? 30,
           endpoint: s.endpoint,
           cookieSet: Boolean(s.cookie),
           proxies: s.proxies || [],
@@ -1590,6 +1653,7 @@ const NUMERIC_SPECS = {
   videos: { field: 'videoConcurrency', lo: 1, hi: 12, label: '同时阅读视频数' },
   total: { field: 'maxTotalAgents', lo: 1, hi: 24, label: 'AI 总数上限' },
   gap: { field: 'gapMs', lo: 300, hi: 5000, label: '请求间隔' },
+  attempts: { field: 'maxAttempts', lo: 1, hi: 60, label: '最多尝试视频数' },
 }
 
 function checkNumber(raw, spec) {
@@ -1614,7 +1678,7 @@ function registerCommands(ctx) {
     ctx.commands.register({
       name: 'bili',
       description: 'B站视频小工具：查看或修改取数方式、并发、自建服务器、登录态',
-      input: { hint: 'mode auto | videos 3 | agents 2-4 | total 12 | endpoint URL | test | status' },
+      input: { hint: 'mode auto | videos 3 | agents 2-4 | total 12 | attempts 30 | endpoint URL | test | status' },
       async handler(inv) {
         const raw = String(inv.rawInput || '').trim()
         const parts = raw.split(/\s+/).filter(Boolean)
@@ -1675,6 +1739,14 @@ function registerCommands(ctx) {
             if (!r.ok) return { kind: 'error', text: r.message }
             await saveSettings({ [spec.field]: r.value })
             return { kind: 'success', text: `AI 总数上限 ${r.value}` }
+          }
+
+          if (verb === 'attempts') {
+            const spec = NUMERIC_SPECS.attempts
+            const r = checkNumber(arg, spec)
+            if (!r.ok) return { kind: 'error', text: r.message }
+            await saveSettings({ [spec.field]: r.value })
+            return { kind: 'success', text: `最多尝试 ${r.value} 个视频` }
           }
 
           if (verb === 'endpoint') {
@@ -1764,6 +1836,10 @@ function registerCommands(ctx) {
                 const r = checkNumber(v, NUMERIC_SPECS.total)
                 if (r.ok) patch.maxTotalAgents = r.value
                 else bad.push(`total=${v}`)
+              } else if (k === 'attempts') {
+                const r = checkNumber(v, NUMERIC_SPECS.attempts)
+                if (r.ok) patch.maxAttempts = r.value
+                else bad.push(`attempts=${v}`)
               } else if (k === 'gap') {
                 const r = checkNumber(v, NUMERIC_SPECS.gap)
                 if (r.ok) patch.gapMs = r.value
@@ -1794,7 +1870,7 @@ function registerCommands(ctx) {
 
           return {
             kind: 'error',
-            text: `未知子命令 ${verb}。可用：status / mode / videos / agents / total / endpoint / gap / cookie / clearcookie / test / reset`,
+            text: `未知子命令 ${verb}。可用：status / mode / videos / agents / total / attempts / endpoint / gap / cookie / clearcookie / test / reset`,
           }
         } catch (err) {
           return { kind: 'error', text: `执行失败：${String(err).slice(0, 200)}` }
@@ -1831,6 +1907,7 @@ function registerHttpApi(ctx) {
     agentsPerVideoMin: s.agentsPerVideoMin ?? 2,
     agentsPerVideoMax: s.agentsPerVideoMax ?? 4,
     maxTotalAgents: s.maxTotalAgents ?? 12,
+    maxAttempts: s.maxAttempts ?? 30,
     gapMs: s.gapMs,
     endpoint: s.endpoint || '',
     hasCookie: Boolean(s.cookie),
@@ -1903,6 +1980,10 @@ function registerHttpApi(ctx) {
                 const aTot = Number(patch.maxTotalAgents)
                 if (Number.isFinite(aTot)) {
                   cleanPatch.maxTotalAgents = Math.min(Math.max(Math.round(aTot), 1), 24)
+                }
+                const attempts = Number(patch.maxAttempts)
+                if (Number.isFinite(attempts)) {
+                  cleanPatch.maxAttempts = Math.min(Math.max(Math.round(attempts), 1), 60)
                 }
                 // 区间要自洽：min 不得大于 max
                 if (cleanPatch.agentsPerVideoMin !== undefined || cleanPatch.agentsPerVideoMax !== undefined) {
