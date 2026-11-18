@@ -1033,9 +1033,103 @@ function registerCommands(ctx) {
   )
 }
 
+/* ----------------------------------------------------------------- http api */
+
+/**
+ * The panel reads and writes settings through two same-origin routes.
+ *
+ * Why HTTP instead of a Remote call: a Client plugin has no write access to Host
+ * files, and the `main` slot is root-scoped with no session binding, so there is
+ * no agent to address a Remote command with. A local route sidesteps both
+ * problems and keeps the panel to one click.
+ */
+function registerHttpApi(ctx) {
+  const ws = ctx.get('webServer')
+  if (!ws || typeof ws.register !== 'function') return
+
+  const view = (s) => ({
+    mode: s.mode,
+    concurrency: s.concurrency,
+    gapMs: s.gapMs,
+    endpoint: s.endpoint || '',
+    hasCookie: Boolean(s.cookie),
+    settingsFile: SETTINGS_FILE,
+  })
+
+  ctx.effect(() =>
+    ws.register({
+      kind: 'exact',
+      path: '/bili-learn/settings',
+      resource: async (request) => {
+        try {
+          if (request.method === 'POST') {
+            let patch = {}
+            try {
+              patch = await request.json()
+            } catch {
+              patch = {}
+            }
+            const clean = {}
+            if (patch && typeof patch === 'object') {
+              if (
+                typeof patch.mode === 'string' &&
+                ['default', 'direct', 'self', 'proxy', 'auto'].includes(patch.mode)
+              ) {
+                clean.mode = patch.mode
+              }
+              const conc = Number(patch.concurrency)
+              if (Number.isFinite(conc)) {
+                clean.concurrency = Math.min(Math.max(Math.round(conc), 1), 12)
+              }
+              const gap = Number(patch.gapMs)
+              if (Number.isFinite(gap)) {
+                clean.gapMs = Math.min(Math.max(Math.round(gap), 300), 5000)
+              }
+              if (typeof patch.endpoint === 'string') clean.endpoint = patch.endpoint.trim()
+              if (typeof patch.cookie === 'string') clean.cookie = patch.cookie.trim()
+            }
+            const s = await saveSettings(clean)
+            return Response.json({ ok: true, settings: view(s) })
+          }
+          const s = await loadSettings()
+          return Response.json({ ok: true, settings: view(s) })
+        } catch (err) {
+          return Response.json({ ok: false, error: String(err).slice(0, 200) }, { status: 500 })
+        }
+      },
+    }),
+  )
+
+  ctx.effect(() =>
+    ws.register({
+      kind: 'exact',
+      path: '/bili-learn/test',
+      resource: async () => {
+        try {
+          const s = await loadSettings()
+          const out = { ok: true, self: null, login: null }
+          if (s.endpoint) {
+            const h = await selfHealth(s.endpoint)
+            out.self = { ok: Boolean(h.ok), endpoint: s.endpoint }
+          }
+          const nav = await getJson(`${API}/x/web-interface/nav`, {
+            cookie: s.cookie || '',
+            gapMs: 400,
+          })
+          out.login = { ok: Boolean(nav?.data?.isLogin), name: nav?.data?.uname || '' }
+          return Response.json(out)
+        } catch (err) {
+          return Response.json({ ok: false, error: String(err).slice(0, 200) }, { status: 500 })
+        }
+      },
+    }),
+  )
+}
+
 export const inject = ['tools', 'commands']
 
 export function apply(ctx) {
   registerTools(ctx)
   registerCommands(ctx)
+  registerHttpApi(ctx)
 }
