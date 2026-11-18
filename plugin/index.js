@@ -1300,14 +1300,27 @@ function registerHttpApi(ctx) {
       c.webServer.register({
         kind: 'exact',
         path: '/bili-learn/settings',
-        resource: async (request) => {
+        // 必须用 handler 而不是 resource：resource 型路由只回 GET/HEAD，
+        // 其它方法在匹配前就被 405 挡掉，POST 根本到不了这里。
+        handler: async (req, res) => {
+          const send = (payload, status = 200) => {
+            const body = JSON.stringify(payload)
+            res.writeHead(status, {
+              'content-type': 'application/json; charset=utf-8',
+              'cache-control': 'no-store',
+            })
+            res.end(body)
+          }
           try {
-            if (request.method === 'POST') {
+            if (req.method === 'POST') {
+              const chunks = []
+              for await (const chunk of req) chunks.push(chunk)
+              const raw = Buffer.concat(chunks).toString('utf8')
               let patch = {}
               try {
-                patch = await request.json()
+                patch = JSON.parse(raw || '{}')
               } catch {
-                patch = {}
+                return send({ ok: false, error: '请求体不是合法 JSON' }, 400)
               }
               const cleanPatch = {}
               if (patch && typeof patch === 'object') {
@@ -1344,12 +1357,16 @@ function registerHttpApi(ctx) {
                 }
               }
               const s = await saveSettings(cleanPatch)
-              return Response.json({ ok: true, settings: view(s) })
+              return send({ ok: true, settings: view(s) })
+            }
+            if (req.method !== 'GET' && req.method !== 'HEAD') {
+              res.writeHead(405, { allow: 'GET, HEAD, POST' })
+              return res.end()
             }
             const s = await loadSettings()
-            return Response.json({ ok: true, settings: view(s) })
+            return send({ ok: true, settings: view(s) })
           } catch (err) {
-            return Response.json({ ok: false, error: String(err).slice(0, 200) }, { status: 500 })
+            return send({ ok: false, error: String(err && err.message ? err.message : err).slice(0, 300) }, 500)
           }
         },
       }),
@@ -1458,7 +1475,34 @@ function registerHttpApi(ctx) {
         '/bili-learn/qr',
         '/bili-learn/qr/poll',
       ],
+      settingsRoute: 'handler (accepts POST)',
     })
+
+    // 自证：面板点「保存」走的就是这条 POST。resource 型路由只认 GET/HEAD，
+    // 所以这里实测一次，结果落盘，出问题时不用猜。
+    const timer = setTimeout(async () => {
+      const out = { at: new Date().toISOString(), origin }
+      try {
+        const before = await loadSettings()
+        const res = await fetch(`${origin}/bili-learn/settings`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ concurrency: before.concurrency || 4 }),
+        })
+        const body = await res.json().catch(() => ({}))
+        out.postStatus = res.status
+        out.postOk = Boolean(body.ok)
+        out.postError = body.error || ''
+      } catch (err) {
+        out.postStatus = 0
+        out.postOk = false
+        out.postError = String(err).slice(0, 200)
+      }
+      writeFile(path.join(HARVEST_ROOT, '..', 'selftest.json'), JSON.stringify(out, null, 2), 'utf8').catch(
+        () => {},
+      )
+    }, 8000)
+    c.effect(() => () => clearTimeout(timer))
   })
 }
 

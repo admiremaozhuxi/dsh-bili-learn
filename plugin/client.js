@@ -194,6 +194,7 @@ window.__ModuleLoader__.load({
       const [gap, setGap] = useState(1200)
       const [advanced, setAdvanced] = useState(false)
       const [status, setStatus] = useState('')   // '' | 'saving' | 'saved' | 'error'
+      const [saveError, setSaveError] = useState('')
       const [testResult, setTestResult] = useState(null)
       const [testing, setTesting] = useState(false)
       const [copied, setCopied] = useState('')
@@ -349,6 +350,7 @@ window.__ModuleLoader__.load({
 
       const save = async () => {
         setStatus('saving')
+        setSaveError('')
         try {
           const d = await apiPost('/bili-learn/settings', {
             mode,
@@ -363,9 +365,11 @@ window.__ModuleLoader__.load({
             setTimeout(() => setStatus(''), 2000)
           } else {
             setStatus('error')
+            setSaveError((d && d.error) || '服务端拒绝了，没给原因')
           }
         } catch (err) {
           setStatus('error')
+          setSaveError(String((err && err.message) || err))
         }
       }
 
@@ -689,7 +693,8 @@ window.__ModuleLoader__.load({
             ? h('span', { style: { fontSize: 12.5, color: V.ok } }, '已保存 ✓')
             : null,
           status === 'error'
-            ? h('span', { style: { fontSize: 12.5, color: V.err } }, '保存失败，看下方说明')
+            ? h('span', { style: { fontSize: 12.5, color: V.err, wordBreak: 'break-all' } },
+                '保存失败：' + (saveError || '未知原因'))
             : null,
         ),
 
