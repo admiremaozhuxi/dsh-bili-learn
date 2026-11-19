@@ -1,7 +1,7 @@
 {
   "name": "dsh-bili-learn",
   "title": "视频与字幕（B站视频小工具）",
-  "description": "让 AI 真正读懂 B 站视频：字幕、评论、画面、口播一次拿全。装完即用，不需要 Python、不需要 ffmpeg、不需要开开发者工具。支持多集课程（分P清单、指定第几集）、多视频并行研读（每个视频按内容长度分配若干子 agent，短片读完后空闲的 agent 转去帮长片，总并发有上限）。没字幕的视频可自动跳过、转音频转写或抽帧看画面。",
+  "description": "把 B 站变成你 DSH 里的搜索源：搜索引擎索引不到视频里的口播和屏幕操作，这个插件把它们变成 AI 能逐字读的笔记。字幕、评论、画面、语音转写一次拿全，装完即用，不需要 Python、ffmpeg 或开发者工具。支持多集课程（分P清单、指定第几集）、多视频并行研读（按内容长度分配子 agent，总并发有上限）、没字幕自动跳过或改用转写与抽帧。",
   "author": "admiremaozhuxi",
   "homepage": "https://github.com/admiremaozhuxi/dsh-bili-learn",
   "repository": {
