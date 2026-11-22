@@ -269,6 +269,13 @@ tools/           可选：自建解析服务器 + 第三方站实测清单
 mcp/polylens/    可选：接 polylens 作为第二数据源
 ```
 
+文档：
+
+- [docs/DETAIL.md](docs/DETAIL.md) —— 接口细节与字段说明
+- [docs/DESIGN-RETROSPECTIVE.md](docs/DESIGN-RETROSPECTIVE.md) —— 设计与复盘：需求范围怎么划、设计维度、重构三阶段、9 条教训
+- [docs/REFACTOR-CHECKLIST.md](docs/REFACTOR-CHECKLIST.md) —— 拆模块的检查清单（每条都对应一次真实翻车）
+- [docs/BROWSER_SCRAPE.md](docs/BROWSER_SCRAPE.md) —— 第三方站解析的实测步骤
+
 ---
 
 ## License
