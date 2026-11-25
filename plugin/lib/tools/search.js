@@ -143,9 +143,17 @@ export function registerSearch(ctx, deps) {
           .slice(0, 4)
         if (!phrases.length) return { ok: false, items: [], sampled: 0, kept: 0, dropped: 0, phrases: [], note: 'keyword 为空' }
 
-        const pages = Math.min(Math.max(Number(args.pages) || 2, 1), 5)
-        const order = ['click', 'pubdate', 'dm', 'stow'].includes(String(args.order)) ? String(args.order) : 'click'
+        const orderRaw = String(args.order || '').trim().toLowerCase()
+        const allowed = ['totalrank', 'click', 'pubdate', 'dm', 'stow']
+        const explicitOrder = allowed.includes(orderRaw) ? orderRaw : ''
+        // 服务端综合排序就是「不传 order」。它比单纯 click / pubdate 都更稳：
+        // 只按播放排序会把新内容压死；只按发布时间排序又全是刚发几分钟、播放必然很低的。
+        const order = !explicitOrder || explicitOrder === 'totalrank' ? undefined : explicitOrder
+        // 带天数筛选时要多抓几页：综合排序里"既新又热"的条目分散在若干页，
+        // 只抓一页再按时间过滤，很容易筛完什么都不剩。
         const days = Math.max(0, Number(args.days) || 0)
+        const defaultPages = days > 0 ? 3 : 2
+        const pages = Math.min(Math.max(Number(args.pages) || defaultPages, 1), 5)
         const minPlay = Math.max(0, Number(args.minPlay) || 0)
         const dMin = Math.max(0, Number(args.durationMin) || 0) * 60
         const dMax = Math.max(0, Number(args.durationMax) || 0) * 60
@@ -213,7 +221,8 @@ export function registerSearch(ctx, deps) {
         if (dMin) noteBits.push('时长 ≥ ' + dMin / 60 + ' 分钟')
         if (dMax) noteBits.push('时长 ≤ ' + dMax / 60 + ' 分钟')
         if (words.length) noteBits.push('排除 ' + words.join('/'))
-        noteBits.push('同 UP ≤ ' + upCap, '排序 ' + order)
+        noteBits.push('同 UP ≤ ' + upCap, '排序 ' + (order || '综合'))
+        if (days > 0 && !Number(args.pages)) noteBits.push('为凑够近期结果多抓了页')
         if (errors.length) noteBits.push('部分失败：' + errors.slice(0, 2).join('; '))
 
         return {

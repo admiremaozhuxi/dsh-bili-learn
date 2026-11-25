@@ -17,13 +17,14 @@ const bad = (m) => {
 const NOW = Math.floor(Date.now() / 1000)
 const day = 86400
 
-function makeTool(rows) {
+function makeTool(rows, seen) {
   let tool = null
   const ctx = { effect: (fn) => fn(), tools: { register: (def) => { tool = def } } }
   const deps = {
     loadSettings: async () => ({ cookie: '', gapMs: 300 }),
     textBlock: (s) => ({ kind: 'text', text: s }),
     searchVideos: async (phrase, opts) => {
+      if (seen) seen.push({ phrase, order: opts.order, page: opts.page })
       if (phrase === 'boom') return { error: '风控', items: [] }
       return { items: rows }
     },
@@ -98,6 +99,39 @@ const boom = await tool.execute({ keyword: 'boom' })
 if (boom.ok && boom.items.length) bad('搜索报错时不该有结果')
 else if (!/部分失败|风控/.test(String(boom.note || ''))) bad('搜索报错没有写进 note：' + boom.note)
 else ok('搜索报错写进 note，没有崩')
+
+// 10) 排序策略：默认不传 order（= 服务端综合排序），显式 pubdate 才传
+{
+  const seen = []
+  const t2 = makeTool(rows, seen)
+  await t2.execute({ keyword: '显卡' })
+  if (seen.length && seen.every((x) => x.order === undefined)) ok('默认不传 order（走服务端综合排序）')
+  else bad('默认居然传了 order：' + JSON.stringify(seen[0]))
+  const seen2 = []
+  const t3 = makeTool(rows, seen2)
+  await t3.execute({ keyword: '显卡', order: 'pubdate' })
+  if (seen2.every((x) => x.order === 'pubdate')) ok('显式 order=pubdate 会照传')
+  else bad('order 参数没传下去：' + JSON.stringify(seen2[0]))
+  const seen3 = []
+  const t4 = makeTool(rows, seen3)
+  await t4.execute({ keyword: '显卡', order: 'totalrank' })
+  if (seen3.every((x) => x.order === undefined)) ok('order=totalrank 等价于不传（都走综合）')
+  else bad('totalrank 没归到综合排序：' + JSON.stringify(seen3[0]))
+}
+
+// 11) 带天数筛选时多抓页（否则综合排序里"既新又热"的容易筛空）
+{
+  const seen = []
+  const fullPage = Array.from({ length: 20 }, (_, i) => ({
+    bvid: 'BVp' + i, title: '测试 ' + i, author: 'up' + (i % 3),
+    play: String(1000 + i), duration: '5:00', pubdate: NOW - i * day, desc: '',
+  }))
+  const t5 = makeTool(fullPage, seen)
+  await t5.execute({ keyword: '显卡', days: 30 })
+  const pagesHit = new Set(seen.map((x) => x.page))
+  if (pagesHit.size >= 3) ok('days>0 时默认抓 3 页（实际 ' + pagesHit.size + ' 页）')
+  else bad('days>0 只抓了 ' + pagesHit.size + ' 页，容易筛空')
+}
 
 if (failed) {
   console.error('bili_search 测试失败 ' + failed + ' 项')

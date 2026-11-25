@@ -204,9 +204,13 @@ const clean = (s) =>
 /* ---------------------------------------------------------------- harvesting */
 
 async function searchVideos(keyword, opts) {
-  const { cookie, gapMs, order = 'click', page = 1 } = opts
+  const { cookie, gapMs, order, page = 1 } = opts
   const key = await mixinKey(cookie, gapMs)
-  const params = { search_type: 'video', keyword, order, page, page_size: 20 }
+  // order 不传 = 服务端「综合排序」（totalrank）。这是默认值，也是唯一能同时兼顾
+  // 「新发布的」和「高播放的」的排序：光按播放会把新内容压在下面，
+  // 光按发布时间又会全是刚发几分钟、播放必然很低的视频。
+  const params = { search_type: 'video', keyword, page, page_size: 20 }
+  if (order) params.order = order
   const url = key
     ? signed(`${API}/x/web-interface/wbi/search/type`, params, key)
     : `${API}/x/web-interface/search/type?${new URLSearchParams(params)}`
