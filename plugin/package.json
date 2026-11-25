@@ -1,9 +1,9 @@
 {
   "name": "dsh-bili-learn",
-  "version": "0.2.8",
+  "version": "0.2.9",
   "scripts": {
     "check": "node --check index.js && node --check lib/net.js && node --check lib/throttle.js && node --check client.js",
-    "test": "npm run check && node test/throttle.test.mjs"
+    "test": "npm run check && node test/throttle.test.mjs && node test/panel.test.mjs"
   },
   "type": "module",
   "license": "MIT",

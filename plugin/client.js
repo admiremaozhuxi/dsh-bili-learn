@@ -988,54 +988,6 @@ window.__ModuleLoader__.load({
       const statusView = h(
         'div',
         null,
-        h(Label, null, '请求节流（风控相关）'),
-        h(
-          'div',
-          { style: { background: V.card, border: `1px solid ${V.line}`, borderRadius: 8, padding: '11px 13px', marginBottom: 8 } },
-          !throttleInfo
-            ? h('div', { style: { fontSize: 12.5, color: V.sub } }, '读取中…')
-            : h(
-                'div',
-                null,
-                tRow('当前生效间隔', throttleInfo.effectiveMs + 'ms'),
-                tRow(
-                  '构成',
-                  '基础 ' + throttleInfo.baseMs + 'ms · 学习 ' + (throttleInfo.learnedMs || 0) + 'ms（撞一次翻倍、连续顺利回落）',
-                ),
-                tRow(
-                  '安静期',
-                  throttleInfo.quietSeconds > 0
-                    ? '还剩 ' + throttleInfo.quietSeconds + ' 秒（' + (throttleInfo.quietReason || '') + '）'
-                    : '无',
-                ),
-                tRow(
-                  '冷却',
-                  throttleInfo.cooldownSeconds > 0
-                    ? '还剩 ' + Math.ceil(throttleInfo.cooldownSeconds / 60) + ' 分钟（' + (throttleInfo.cooldownReason || '') + '）'
-                    : '无',
-                ),
-                throttleInfo.neighbourQuietSeconds > 0
-                  ? tRow('邻居约定的安静期', '还剩 ' + throttleInfo.neighbourQuietSeconds + ' 秒')
-                  : null,
-                h(
-                  'div',
-                  { style: { display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' } },
-                  h(Button, { onClick: () => actThrottle('reset-gap') }, '重置学习值'),
-                  h(
-                    Button,
-                    { onClick: () => actThrottle('clear-cooldown'), disabled: !(throttleInfo.cooldownSeconds > 0) },
-                    '清除冷却',
-                  ),
-                  h(
-                    Button,
-                    { onClick: () => actThrottle('clear-quiet'), disabled: !(throttleInfo.quietSeconds > 0) },
-                    '清除安静期',
-                  ),
-                ),
-                h('div', { style: { fontSize: 11, color: V.sub, marginTop: 8 } }, '状态文件 ' + throttleInfo.file),
-              ),
-        ),
-
         h(Label, null, '可用来源（插件启动时会自动测一遍）'),
         h(
           'div',
@@ -1137,6 +1089,59 @@ window.__ModuleLoader__.load({
 
       /* ----------------------------------------------------------------- shell */
 
+      // 顶部常驻：不管当前哪个 tab，打开面板第一眼就能看到节流状态
+      const throttleBlock = h(
+        'div',
+        { style: { marginBottom: 4 } },
+        h(Label, null, '请求节流（风控相关）'),
+        h(
+          'div',
+          { style: { background: V.card, border: `1px solid ${V.line}`, borderRadius: 8, padding: '11px 13px', marginBottom: 8 } },
+          !throttleInfo
+            ? h('div', { style: { fontSize: 12.5, color: V.sub } }, '读取中…')
+            : h(
+                'div',
+                null,
+                tRow('当前生效间隔', throttleInfo.effectiveMs + 'ms'),
+                tRow(
+                  '构成',
+                  '基础 ' + throttleInfo.baseMs + 'ms · 学习 ' + (throttleInfo.learnedMs || 0) + 'ms（撞一次翻倍、连续顺利回落）',
+                ),
+                tRow(
+                  '安静期',
+                  throttleInfo.quietSeconds > 0
+                    ? '还剩 ' + throttleInfo.quietSeconds + ' 秒（' + (throttleInfo.quietReason || '') + '）'
+                    : '无',
+                ),
+                tRow(
+                  '冷却',
+                  throttleInfo.cooldownSeconds > 0
+                    ? '还剩 ' + Math.ceil(throttleInfo.cooldownSeconds / 60) + ' 分钟（' + (throttleInfo.cooldownReason || '') + '）'
+                    : '无',
+                ),
+                throttleInfo.neighbourQuietSeconds > 0
+                  ? tRow('邻居约定的安静期', '还剩 ' + throttleInfo.neighbourQuietSeconds + ' 秒')
+                  : null,
+                h(
+                  'div',
+                  { style: { display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' } },
+                  h(Button, { onClick: () => actThrottle('reset-gap') }, '重置学习值'),
+                  h(
+                    Button,
+                    { onClick: () => actThrottle('clear-cooldown'), disabled: !(throttleInfo.cooldownSeconds > 0) },
+                    '清除冷却',
+                  ),
+                  h(
+                    Button,
+                    { onClick: () => actThrottle('clear-quiet'), disabled: !(throttleInfo.quietSeconds > 0) },
+                    '清除安静期',
+                  ),
+                ),
+                h('div', { style: { fontSize: 11, color: V.sub, marginTop: 8 } }, '状态文件 ' + throttleInfo.file),
+              ),
+        ),
+      )
+
       return h(
         'div',
         {
@@ -1156,8 +1161,9 @@ window.__ModuleLoader__.load({
             { style: { display: 'flex', borderBottom: `1px solid ${V.line}`, marginTop: 16, marginBottom: 18 } },
             h(Tab, { active: tab === 'settings', onClick: () => setTab('settings') }, '设置'),
             h(Tab, { active: tab === 'tools', onClick: () => setTab('tools') }, '能做什么'),
-            h(Tab, { active: tab === 'status', onClick: () => setTab('status') }, '说明'),
+            h(Tab, { active: tab === 'status', onClick: () => setTab('status') }, '状态'),
           ),
+          throttleBlock,
           !loaded
             ? h('div', { style: { fontSize: 12.5, color: V.sub } }, '正在读取设置…')
             : tab === 'settings' ? settingsView : tab === 'tools' ? toolsView : statusView,
