@@ -11,7 +11,7 @@
  *   3. nothing else; third-party sites cannot be called over plain HTTP
  */
 import { createHash } from 'node:crypto'
-// 0.2.5：与 dsh-bili-search 共享的风控节流（静默期 / 自适应间隔 / 冷却）
+// 本插件自己的请求节流：串行闸门 / 自适应间隔 / 安静期 / 冷却（全部自有实现与自有存储）
 import { gate, looksBlocked, recordOk, recordThrottled } from './throttle.js'
 
 const UA =

@@ -895,8 +895,8 @@ async function probeAll() {
       results.push({ id: s.id, ok: false, ms: 0, note: String(err).slice(0, 60) })
     }
   }
-  // 探针刚打完一批请求：给同一台机器上的其它 B 站工具（含 dsh-bili-search）留一段静默期，
-  // 谁也不要在别人刚探完的时候马上开检索。
+  // 探针刚打完一批请求：声明一段安静期。本插件自己一定遵守；
+  // 同机别的 B 站工具如果愿意读那个中立文件，也能看到（只读约定，不绑定任何具体插件）。
   quietFor(90_000, 'bili_sources 探针刚跑完')
   // 改字段而不是重新赋值：sourceState 会被传进 lib/tools 的模块里，
   // 重新赋值会让那些模块手里的还是旧对象。
