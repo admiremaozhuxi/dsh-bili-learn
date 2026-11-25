@@ -111,6 +111,24 @@ else ok('中立安静期文件只读不写（内容未变）')
   else ok('index.js 撞墙后会记账（降速 + 冷却）')
 }
 
+// 9) 面板接线检查：侧边栏那块「请求节流」必须真的挂在状态接口上
+{
+  const { readFileSync: rf } = await import('node:fs')
+  const idx = rf(new URL('../index.js', import.meta.url), 'utf8')
+  const cli = rf(new URL('../client.js', import.meta.url), 'utf8')
+  const checks = [
+    [idx.includes("path: '/bili-learn/throttle'"), 'index.js 注册了 /bili-learn/throttle'],
+    [idx.includes('resetGap') && idx.includes('clearCooldown') && idx.includes('clearQuiet'), 'index.js 三个动作都能落到节流层'],
+    [cli.includes("'/bili-learn/throttle'"), 'client.js 面板调的是这个接口'],
+    [cli.includes('请求节流（风控相关）'), '面板有「请求节流」这一块'],
+    [cli.includes("actThrottle('reset-gap')") && cli.includes("actThrottle('clear-cooldown')"), '面板三个按钮接上了动作'],
+  ]
+  for (const [pass, label] of checks) {
+    if (pass) ok(label)
+    else bad('面板接线缺失：' + label)
+  }
+}
+
 // 收尾
 rmSync(DIR, { recursive: true, force: true })
 if (failed) {

@@ -147,6 +147,51 @@ export function gate(label = '', minGapMs = 0) {
   return next
 }
 
+/* ------------------------- 给面板用的状态与重置 ------------------------- */
+
+/** 一次性拿到面板要显示的全部数字 */
+export function throttleState() {
+  const s = readOwn()
+  const learned = Number(s.gapMs) || 0
+  return {
+    baseMs: BASE_MS,
+    learnedMs: learned,
+    effectiveMs: gapMs(),
+    floorMs: FLOOR_MS,
+    ceilMs: CEIL_MS,
+    okStreak: Number(s.okStreak) || 0,
+    quietSeconds: Math.ceil(quietRemainMs() / 1000),
+    quietReason: String(s.quietReason || ''),
+    cooldownSeconds: Math.ceil(cooldownRemainMs() / 1000),
+    cooldownReason: String(s.cooldownReason || ''),
+    neighbourQuietSeconds: Math.ceil(neighbourQuietRemainMs() / 1000),
+    neighbourFile: QUIET_HINT,
+    file: OWN_FILE,
+    adaptiveOn: process.env.BILI_LEARN_NO_ADAPTIVE !== '1',
+  }
+}
+
+/** 把学到（或惩罚）的间隔清掉，回到基础值 */
+export function resetGap() {
+  const s = readOwn()
+  patchOwn({ gapMs: 0, okStreak: 0 })
+  return { cleared: Number(s.gapMs) > 0 || Number(s.okStreak) > 0 }
+}
+
+/** 清掉冷却（用户确认已经恢复正常时用） */
+export function clearCooldown() {
+  const s = readOwn()
+  patchOwn({ cooldownUntil: 0, cooldownReason: '' })
+  return { cleared: Number(s.cooldownUntil) > Date.now() }
+}
+
+/** 清掉自己声明的安静期 */
+export function clearQuiet() {
+  const s = readOwn()
+  patchOwn({ quietUntil: 0, quietReason: '' })
+  return { cleared: Number(s.quietUntil) > Date.now() }
+}
+
 /** 回包像不像拦截页 */
 export function looksBlocked(text) {
   return /request was banned|出错啦|访问频繁/.test(String(text || ''))

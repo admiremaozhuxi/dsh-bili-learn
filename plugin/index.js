@@ -17,7 +17,7 @@ import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import path from 'node:path'
 
-import { gate, quietFor, recordThrottled } from './lib/throttle.js'
+import { clearCooldown, clearQuiet, gate, quietFor, recordThrottled, resetGap, throttleState } from './lib/throttle.js'
 import { transcribeAudio } from './lib/asr.js'
 import { ensureFfmpeg } from './lib/ffmpeg.js'
 import { pollQrLogin, startQrLogin } from './lib/login.js'
@@ -1307,6 +1307,36 @@ function registerHttpApi(ctx) {
                 url: s.url || '',
               })),
             })
+          } catch (err) {
+            return Response.json({ ok: false, error: String(err).slice(0, 200) }, { status: 500 })
+          }
+        },
+      }),
+    )
+
+    // 面板上的「请求节流」一块：看当前间隔 / 安静期 / 冷却，并能一键重置。
+    // 与 /bili-learn/sources 同源（同一份状态文件），面板刷新即可看到最新数字。
+    c.effect(() =>
+      c.webServer.register({
+        kind: 'exact',
+        path: '/bili-learn/throttle',
+        resource: async (request) => {
+          try {
+            if (request.method === 'POST') {
+              let body = {}
+              try {
+                body = await request.json()
+              } catch {
+                body = {}
+              }
+              const action = String(body.action || '')
+              let out = { ok: false, error: '未知动作：' + action }
+              if (action === 'reset-gap') out = { ok: true, ...resetGap() }
+              else if (action === 'clear-cooldown') out = { ok: true, ...clearCooldown() }
+              else if (action === 'clear-quiet') out = { ok: true, ...clearQuiet() }
+              return Response.json({ ...out, state: throttleState() })
+            }
+            return Response.json({ ok: true, state: throttleState() })
           } catch (err) {
             return Response.json({ ok: false, error: String(err).slice(0, 200) }, { status: 500 })
           }

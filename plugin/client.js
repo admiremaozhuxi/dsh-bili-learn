@@ -288,6 +288,27 @@ window.__ModuleLoader__.load({
         }
       }
 
+      // 请求节流（风控）状态：看当前间隔 / 安静期 / 冷却，并能一键重置
+      const [throttleInfo, setThrottleInfo] = useState(null)
+
+      const loadThrottle = async () => {
+        try {
+          const d = await apiGet('/bili-learn/throttle')
+          if (d && d.ok) setThrottleInfo(d.state)
+        } catch {
+          /* 接口不可用不影响面板其它部分 */
+        }
+      }
+
+      const actThrottle = async (action) => {
+        try {
+          const d = await apiPost('/bili-learn/throttle', { action })
+          if (d && d.state) setThrottleInfo(d.state)
+        } catch {
+          /* 同上 */
+        }
+      }
+
       const loadSources = async (refresh) => {
         setProbing(true)
         try {
@@ -323,6 +344,7 @@ window.__ModuleLoader__.load({
       // 打开面板就读真实配置
       useEffect(() => {
         let alive = true
+        loadThrottle()
         apiGet('/bili-learn/settings')
           .then((d) => {
             if (!alive) return
@@ -955,9 +977,65 @@ window.__ModuleLoader__.load({
 
       /* ---------------------------------------------------------------- status */
 
+      const tRow = (k, v) =>
+        h(
+          'div',
+          { style: { display: 'grid', gridTemplateColumns: '112px 1fr', gap: 10, padding: '3px 0', fontSize: 12.5 } },
+          h('span', { style: { color: V.sub } }, k),
+          h('span', { style: { color: V.text, fontFamily: MONO, fontSize: 11.5 } }, v),
+        )
+
       const statusView = h(
         'div',
         null,
+        h(Label, null, '请求节流（风控相关）'),
+        h(
+          'div',
+          { style: { background: V.card, border: `1px solid ${V.line}`, borderRadius: 8, padding: '11px 13px', marginBottom: 8 } },
+          !throttleInfo
+            ? h('div', { style: { fontSize: 12.5, color: V.sub } }, '读取中…')
+            : h(
+                'div',
+                null,
+                tRow('当前生效间隔', throttleInfo.effectiveMs + 'ms'),
+                tRow(
+                  '构成',
+                  '基础 ' + throttleInfo.baseMs + 'ms · 学习 ' + (throttleInfo.learnedMs || 0) + 'ms（撞一次翻倍、连续顺利回落）',
+                ),
+                tRow(
+                  '安静期',
+                  throttleInfo.quietSeconds > 0
+                    ? '还剩 ' + throttleInfo.quietSeconds + ' 秒（' + (throttleInfo.quietReason || '') + '）'
+                    : '无',
+                ),
+                tRow(
+                  '冷却',
+                  throttleInfo.cooldownSeconds > 0
+                    ? '还剩 ' + Math.ceil(throttleInfo.cooldownSeconds / 60) + ' 分钟（' + (throttleInfo.cooldownReason || '') + '）'
+                    : '无',
+                ),
+                throttleInfo.neighbourQuietSeconds > 0
+                  ? tRow('邻居约定的安静期', '还剩 ' + throttleInfo.neighbourQuietSeconds + ' 秒')
+                  : null,
+                h(
+                  'div',
+                  { style: { display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' } },
+                  h(Button, { onClick: () => actThrottle('reset-gap') }, '重置学习值'),
+                  h(
+                    Button,
+                    { onClick: () => actThrottle('clear-cooldown'), disabled: !(throttleInfo.cooldownSeconds > 0) },
+                    '清除冷却',
+                  ),
+                  h(
+                    Button,
+                    { onClick: () => actThrottle('clear-quiet'), disabled: !(throttleInfo.quietSeconds > 0) },
+                    '清除安静期',
+                  ),
+                ),
+                h('div', { style: { fontSize: 11, color: V.sub, marginTop: 8 } }, '状态文件 ' + throttleInfo.file),
+              ),
+        ),
+
         h(Label, null, '可用来源（插件启动时会自动测一遍）'),
         h(
           'div',
