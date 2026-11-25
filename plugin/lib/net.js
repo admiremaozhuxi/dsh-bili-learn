@@ -12,7 +12,7 @@
  */
 import { createHash } from 'node:crypto'
 // 0.2.5：与 dsh-bili-search 共享的风控节流（静默期 / 自适应间隔 / 冷却）
-import { gate, looksBlocked, noteOk, noteRisk } from './throttle.js'
+import { gate, looksBlocked, recordOk, recordThrottled } from './throttle.js'
 
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
@@ -52,16 +52,16 @@ export async function getJson(url, { referer, cookie, timeout = 12000 } = {}) {
     const text = await res.text()
     if (text.trimStart().startsWith('<')) {
       // 拦截页：记账并且把两个插件一起按住，别继续刷
-      noteRisk('返回拦截页 HTTP ' + res.status)
+      recordThrottled('返回拦截页 HTTP ' + res.status)
       return { _html: true, status: res.status, _risk: true }
     }
     try {
       const json = JSON.parse(text)
-      if (json && json.code === -412) noteRisk('-412 request was banned')
-      else if (json && json.code === 0) noteOk()
+      if (json && json.code === -412) recordThrottled('-412 request was banned')
+      else if (json && json.code === 0) recordOk()
       return json
     } catch {
-      if (looksBlocked(text)) noteRisk('非 JSON 的拦截内容')
+      if (looksBlocked(text)) recordThrottled('非 JSON 的拦截内容')
       return { _raw: text.slice(0, 120) }
     }
   } catch (err) {

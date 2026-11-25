@@ -17,7 +17,7 @@ import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import path from 'node:path'
 
-import { markSilence } from './lib/throttle.js'
+import { quietFor } from './lib/throttle.js'
 import { transcribeAudio } from './lib/asr.js'
 import { ensureFfmpeg } from './lib/ffmpeg.js'
 import { pollQrLogin, startQrLogin } from './lib/login.js'
@@ -889,7 +889,7 @@ async function probeAll() {
   }
   // 探针刚打完一批请求：给同一台机器上的其它 B 站工具（含 dsh-bili-search）留一段静默期，
   // 谁也不要在别人刚探完的时候马上开检索。
-  markSilence(90_000, 'bili_sources 探针刚跑完')
+  quietFor(90_000, 'bili_sources 探针刚跑完')
   // 改字段而不是重新赋值：sourceState 会被传进 lib/tools 的模块里，
   // 重新赋值会让那些模块手里的还是旧对象。
   sourceState.at = Date.now()
