@@ -98,6 +98,19 @@ else ok('尊重邻居声明的安静期（等了 ' + waited7 + 'ms）')
 if (readFileSync(QUIET, 'utf8') !== before7) bad('擅自改写了中立安静期文件')
 else ok('中立安静期文件只读不写（内容未变）')
 
+// 8) 接线检查：工具们真正走的 index.js getJson 必须挂在这道闸门上
+{
+  const { readFileSync: rf } = await import('node:fs')
+  const indexPath = new URL('../index.js', import.meta.url)
+  const src = rf(indexPath, 'utf8')
+  if (!/await gate\(url, gapMs\)/.test(src)) bad('index.js 的 getJson 没有接闸门（gate）')
+  else ok('index.js 的 getJson 接在闸门上（工具主请求路径受控）')
+  if (/await throttle\(gapMs\)/.test(src)) bad('index.js 还在用旧的 lastCall 限速（那是假串行）')
+  else ok('index.js 已不再使用旧的 lastCall 限速')
+  if (!/recordThrottled\(/.test(src)) bad('index.js 撞墙后没有记账（不会降速）')
+  else ok('index.js 撞墙后会记账（降速 + 冷却）')
+}
+
 // 收尾
 rmSync(DIR, { recursive: true, force: true })
 if (failed) {

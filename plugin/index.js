@@ -17,7 +17,7 @@ import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import path from 'node:path'
 
-import { quietFor } from './lib/throttle.js'
+import { gate, quietFor, recordThrottled } from './lib/throttle.js'
 import { transcribeAudio } from './lib/asr.js'
 import { ensureFfmpeg } from './lib/ffmpeg.js'
 import { pollQrLogin, startQrLogin } from './lib/login.js'
@@ -94,14 +94,14 @@ async function saveSettings(patch) {
 
 /* ---------------------------------------------------------------------- http */
 
-let lastCall = 0
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
-async function throttle(gapMs) {
-  const dt = Date.now() - lastCall
-  if (dt < gapMs) await sleep(gapMs - dt)
-  lastCall = Date.now()
-}
+/**
+ * 旧实现：用全局 lastCall 做间隔。
+ * 它有个隐蔽问题：多个并发调用同时读到同一个 lastCall，于是同时 sleep 同样时长、
+ * 然后一起发出去 —— 表现上"有限速"，实际是并发突刺，正是招风控的形态。
+ * 0.2.7 起改用 lib/throttle.js 的串行闸门（gate），这里的间隔值作为该调用的下限传进去。
+ */
 
 function headers(cookie, referer = 'https://www.bilibili.com/') {
   const h = {
@@ -117,7 +117,13 @@ function headers(cookie, referer = 'https://www.bilibili.com/') {
 
 async function getJson(url, { cookie = '', gapMs = 1200, retries = 2, referer } = {}) {
   for (let attempt = 0; attempt <= retries; attempt += 1) {
-    await throttle(gapMs)
+    // 全局串行过闸：排队 + 自适应间隔 + 尊重安静期/冷却（冷却中 gate 会抛 risk，这里转成 -412 让上层当风控处理）
+    try {
+      await gate(url, gapMs)
+    } catch (err) {
+      if (err && err.risk) return { code: -412, message: String(err.message || 'cooling down') }
+      throw err
+    }
     const ctl = new AbortController()
     const timer = setTimeout(() => ctl.abort(), 20000)
     let text = ''
@@ -135,9 +141,11 @@ async function getJson(url, { cookie = '', gapMs = 1200, retries = 2, referer } 
       clearTimeout(timer)
     }
     if (status === 412 || text.trimStart().startsWith('<')) {
-      if (attempt === retries) return { code: -412, message: 'Bilibili risk control (412)' }
-      await sleep(attempt === 0 ? 45000 : 180000)
-      continue
+      // 撞墙就地收手：记账（降速 + 进入冷却/安静期），把 -412 交回上层。
+      // 不再像以前那样盲目等 45 秒 / 180 秒再撞三次 —— 那种"整轮卡死三分钟"是更糟的体验，
+      // 而且等待期间往往还有别的并发请求在打。
+      recordThrottled('HTTP ' + status)
+      return { code: -412, message: 'Bilibili risk control (' + status + ')' }
     }
     try {
       return JSON.parse(text)

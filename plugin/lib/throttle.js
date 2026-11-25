@@ -127,7 +127,7 @@ export function recordThrottled(reason = '命中风控') {
  */
 let queue = Promise.resolve()
 
-async function pass(label) {
+async function pass(label, minGapMs) {
   const cool = cooldownRemainMs()
   if (cool > 0) {
     const mins = Math.ceil(cool / 60000)
@@ -137,11 +137,12 @@ async function pass(label) {
   }
   const quiet = Math.max(quietRemainMs(), neighbourQuietRemainMs())
   if (quiet > 0) await sleep(Math.min(quiet, 10_000))
-  await sleep(gapMs())
+  // 调用方也可以声明自己的下限（例如检索类请求按 1200ms），取两者更大值，避免叠加等待
+  await sleep(Math.max(gapMs(), Number(minGapMs) || 0))
 }
 
-export function gate(label = '') {
-  const next = queue.then(() => pass(label), () => pass(label))
+export function gate(label = '', minGapMs = 0) {
+  const next = queue.then(() => pass(label, minGapMs), () => pass(label, minGapMs))
   queue = next.catch(() => {})
   return next
 }
