@@ -17,6 +17,7 @@ import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import path from 'node:path'
 
+import { markSilence } from './lib/throttle.js'
 import { transcribeAudio } from './lib/asr.js'
 import { ensureFfmpeg } from './lib/ffmpeg.js'
 import { pollQrLogin, startQrLogin } from './lib/login.js'
@@ -875,7 +876,20 @@ async function probeOne(src, timeoutMs = 5000) {
 async function probeAll() {
   const settings = await loadSettings()
   const list = effectiveSources(settings)
-  const results = await Promise.all(list.map((s) => probeOne(s)))
+  // 0.2.5：这里原本是 Promise.all —— 十来个端点同时打出去，正是 2026-11-25 那次
+  // 「探针跑完紧接着检索，第一页就被判拦截页」的直接原因。
+  // 改成逐个探，间隔交给 lib/throttle.js 的共享节流门（串行 + 自适应间隔 + 尊重静默期）。
+  const results = []
+  for (const s of list) {
+    try {
+      results.push(await probeOne(s))
+    } catch (err) {
+      results.push({ id: s.id, ok: false, ms: 0, note: String(err).slice(0, 60) })
+    }
+  }
+  // 探针刚打完一批请求：给同一台机器上的其它 B 站工具（含 dsh-bili-search）留一段静默期，
+  // 谁也不要在别人刚探完的时候马上开检索。
+  markSilence(90_000, 'bili_sources 探针刚跑完')
   // 改字段而不是重新赋值：sourceState 会被传进 lib/tools 的模块里，
   // 重新赋值会让那些模块手里的还是旧对象。
   sourceState.at = Date.now()

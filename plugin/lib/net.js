@@ -11,6 +11,8 @@
  *   3. nothing else; third-party sites cannot be called over plain HTTP
  */
 import { createHash } from 'node:crypto'
+// 0.2.5：与 dsh-bili-search 共享的风控节流（静默期 / 自适应间隔 / 冷却）
+import { gate, looksBlocked, noteOk, noteRisk } from './throttle.js'
 
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
@@ -40,15 +42,26 @@ function headers(referer, cookie) {
 }
 
 export async function getJson(url, { referer, cookie, timeout = 12000 } = {}) {
+  // 先过共享节流门：串行 + 间隔 + 尊重静默期/冷却。
+  // 只有 B 站 API 走这里；媒体 CDN 下载走别的路径，不会被拖慢。
+  await gate(url)
   const ctl = new AbortController()
   const timer = setTimeout(() => ctl.abort(), timeout)
   try {
     const res = await fetch(url, { headers: headers(referer, cookie), signal: ctl.signal })
     const text = await res.text()
-    if (text.trimStart().startsWith('<')) return { _html: true, status: res.status }
+    if (text.trimStart().startsWith('<')) {
+      // 拦截页：记账并且把两个插件一起按住，别继续刷
+      noteRisk('返回拦截页 HTTP ' + res.status)
+      return { _html: true, status: res.status, _risk: true }
+    }
     try {
-      return JSON.parse(text)
+      const json = JSON.parse(text)
+      if (json && json.code === -412) noteRisk('-412 request was banned')
+      else if (json && json.code === 0) noteOk()
+      return json
     } catch {
+      if (looksBlocked(text)) noteRisk('非 JSON 的拦截内容')
       return { _raw: text.slice(0, 120) }
     }
   } catch (err) {
