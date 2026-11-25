@@ -30,6 +30,7 @@ import { registerFrames } from './lib/tools/frames.js'
 import { registerTranscribe } from './lib/tools/transcribe.js'
 import { registerSeries } from './lib/tools/series.js'
 import { registerSources } from './lib/tools/sources.js'
+import { registerSearch } from './lib/tools/search.js'
 import {
   NUMERIC_SPECS,
   SETTING_SPECS,
@@ -790,6 +791,7 @@ function registerTools(ctx) {
     readPlanSummary,
     selfHealth,
     API,
+    searchVideos,
   }
 
   registerLearn(ctx, deps)
@@ -800,6 +802,7 @@ function registerTools(ctx) {
   registerTranscribe(ctx, deps)
   registerSeries(ctx, deps)
   registerSources(ctx, deps)
+  registerSearch(ctx, deps)
 }
 
 /**
