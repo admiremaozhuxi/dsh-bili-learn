@@ -58,6 +58,27 @@ window.__ModuleLoader__.load({
       '.bl-btn:active{transform:scale(.97)}',
       '.bl-btn[disabled]{opacity:.5;cursor:default}',
       '@keyframes bl-fade{from{opacity:0}to{opacity:1}}',
+      '.bl-group{display:block;padding:0 0 14px;margin:0 0 4px;border-bottom:1px solid var(--dsw-alias-border-l1)}',
+      '.bl-group:last-child{border-bottom:0;padding-bottom:0}',
+      '.bl-table{background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l1);border-radius:4px;overflow:hidden}',
+      '.bl-h{display:flex;align-items:center;gap:7px;font-size:12px;font-weight:600;letter-spacing:.3px;color:var(--dsw-alias-label-primary);margin:18px 0 9px;padding-bottom:6px;border-bottom:1px solid var(--dsw-alias-border-l1)}',
+      '.bl-h::before{content:\'\';width:2px;height:11px;border-radius:1px;background:var(--dsw-alias-brand-primary);opacity:.9;flex:0 0 auto}',
+      '.bl-h:first-child{margin-top:0}',
+      '.bl-group > div{padding:2px 6px;margin:0 -6px;border-radius:3px;transition:background 100ms ease}',
+      '.bl-group > div:hover{background:var(--dsw-alias-bg-layer-1)}',
+      '.bl-group > label{padding:2px 6px;margin:0 -6px;border-radius:3px;transition:background 100ms ease}',
+      '.bl-group > label:hover{background:var(--dsw-alias-bg-layer-1)}',
+      '.bl-input{width:100%;box-sizing:border-box;height:28px;padding:0 9px;font-size:12.5px;font-family:inherit;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l1);border-radius:3px;outline:none;transition:border-color 120ms ease,background 120ms ease}',
+      '.bl-input:hover{border-color:var(--dsw-alias-label-secondary)}',
+      '.bl-input:focus{border-color:var(--dsw-alias-brand-primary);background:var(--dsw-alias-bg-base)}',
+      '.bl-input::placeholder{color:var(--dsw-alias-label-secondary);opacity:.7}',
+      '.bl-mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-variant-numeric:tabular-nums}',
+      '.bl-select{height:28px;padding:0 26px 0 9px;font-size:12.5px;font-family:inherit;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l1);border-radius:3px;outline:none;appearance:none;background-image:url("data:image/svg+xml;charset=utf8,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 width=%2710%27 height=%276%27 viewBox=%270 0 10 6%27%3E%3Cpath d=%27M1 1l4 4 4-4%27 fill=%27none%27 stroke=%27%238b929e%27 stroke-width=%271.4%27 stroke-linecap=%27round%27/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 9px center;cursor:pointer;transition:border-color 120ms ease}',
+      '.bl-select:hover{border-color:var(--dsw-alias-label-secondary)}',
+      '.bl-select:focus{border-color:var(--dsw-alias-brand-primary)}',
+      '.bl-check{width:14px;height:14px;margin:0;accent-color:var(--dsw-alias-brand-primary);cursor:pointer}',
+      '.bl-hint{font-size:11.5px;line-height:1.65;color:var(--dsw-alias-label-secondary)}',
+      '.bl-num{font-variant-numeric:tabular-nums}',
       '@media (prefers-reduced-motion: reduce){.bl-view{animation:none}.bl-btn:active{transform:none}.bl-railitem{transition:none}}',
     ].join('')
 
@@ -148,12 +169,9 @@ window.__ModuleLoader__.load({
       )
     }
 
+    /** 分节标题：细线 + 小字重，取代原来那种"卡片头"的观感 */
     function Label(props) {
-      return h(
-        'div',
-        { style: { fontFamily: SANS, fontSize: 12, color: V.sub, marginBottom: 7 } },
-        props.children,
-      )
+      return h('div', { className: 'bl-h' }, props.children)
     }
 
     /** 输入框：与主题一致，聚焦时描边变品牌色。 */
@@ -164,18 +182,8 @@ window.__ModuleLoader__.load({
         placeholder: props.placeholder,
         onChange: (e) => props.onChange(e.target.value),
         spellCheck: false,
-        style: {
-          width: '100%',
-          boxSizing: 'border-box',
-          fontFamily: props.mono ? MONO : SANS,
-          fontSize: 12.5,
-          color: V.text,
-          background: V.sunken,
-          border: `1px solid ${V.line}`,
-          borderRadius: 6,
-          padding: '7px 10px',
-          outline: 'none',
-        },
+        className: props.mono ? 'bl-input bl-mono' : 'bl-input',
+        style: { width: '100%' },
       })
     }
 
@@ -518,12 +526,7 @@ window.__ModuleLoader__.load({
         h(Label, null, 'B 站登录'),
         h(
           'div',
-          {
-            style: {
-              background: V.card, border: `1px solid ${V.line}`, borderRadius: 4,
-              padding: '12px 14px', marginBottom: 20,
-            },
-          },
+          { className: 'bl-group' },
           // 当前状态一行，扫完转眼就能看到
           h(
             'div',
@@ -707,12 +710,7 @@ window.__ModuleLoader__.load({
         h(Label, null, '没字幕时转写补齐'),
         h(
           'div',
-          {
-            style: {
-              background: V.card, border: `1px solid ${V.line}`, borderRadius: 4,
-              padding: '12px 14px', marginBottom: 20,
-            },
-          },
+          { className: 'bl-group' },
           h(
             'label',
             { style: { display: 'flex', alignItems: 'center', gap: 9, cursor: 'pointer' } },
@@ -720,7 +718,7 @@ window.__ModuleLoader__.load({
               type: 'checkbox',
               checked: fillAsr,
               onChange: () => { setFillAsr((v) => !v); setStatus('') },
-              style: { accentColor: V.brand, margin: 0 },
+              className: 'bl-check',
             }),
             h('span', { style: { fontSize: 12.5, color: V.text } }, '没有字幕轨时，改用音频转写拿正文'),
           ),
@@ -739,12 +737,7 @@ window.__ModuleLoader__.load({
         h(Label, null, '没字幕时抽帧看画面'),
         h(
           'div',
-          {
-            style: {
-              background: V.card, border: `1px solid ${V.line}`, borderRadius: 4,
-              padding: '12px 14px', marginBottom: 20,
-            },
-          },
+          { className: 'bl-group' },
           h(
             'label',
             { style: { display: 'flex', alignItems: 'center', gap: 9, cursor: 'pointer' } },
@@ -752,7 +745,7 @@ window.__ModuleLoader__.load({
               type: 'checkbox',
               checked: fillFrames,
               onChange: () => { setFillFrames((v) => !v); setStatus('') },
-              style: { accentColor: V.brand, margin: 0 },
+              className: 'bl-check',
             }),
             h('span', { style: { fontSize: 12.5, color: V.text } }, '没有字幕轨时，抽几帧让 AI 看画面'),
           ),
@@ -805,12 +798,7 @@ window.__ModuleLoader__.load({
         h(Label, null, '自己的服务器（可选）'),
         h(
           'div',
-          {
-            style: {
-              background: V.card, border: `1px solid ${V.line}`, borderRadius: 4,
-              padding: '12px 14px', marginBottom: 20,
-            },
-          },
+          { className: 'bl-group' },
           h('div', { style: { fontSize: 12, color: V.sub, lineHeight: 1.7, marginBottom: 9 } },
             '有服务器就填地址，取视频的请求会走它，本机不消耗配额。没有就留空，不影响其他功能。'),
           h(TextInput, {
@@ -831,12 +819,7 @@ window.__ModuleLoader__.load({
         h(Label, null, '第三方网站'),
         h(
           'div',
-          {
-            style: {
-              background: V.card, border: `1px solid ${V.line}`, borderRadius: 4,
-              padding: '12px 14px', marginBottom: 20,
-            },
-          },
+          { className: 'bl-group' },
           h('div', { style: { fontSize: 12, color: V.sub, lineHeight: 1.7, marginBottom: 10 } },
             '这些站有各自的出口 IP，被限流时可以派子 agent 用浏览器走它们。打勾表示启用。'),
           (sources && sources.all ? sources.all.filter((s) => s.kind === 'web') : []).map((s, i, arr) =>
@@ -855,7 +838,7 @@ window.__ModuleLoader__.load({
                 type: 'checkbox',
                 checked: !disabled.includes(s.id),
                 onChange: () => toggleSource(s.id),
-                style: { accentColor: V.brand, margin: 0 },
+                className: 'bl-check',
               }),
               h('div', { style: { minWidth: 0 } },
                 h('div', { style: { fontSize: 12.5, color: disabled.includes(s.id) ? V.sub : V.text } }, s.name),
@@ -1085,7 +1068,7 @@ window.__ModuleLoader__.load({
         h(Label, null, '分别能拿到什么'),
         h(
           'div',
-          { style: { background: V.card, border: `1px solid ${V.line}`, borderRadius: 4, overflow: 'hidden' } },
+          { className: 'bl-table' },
           CAPS.map(([name, tone, note], i) =>
             h(
               'div',
