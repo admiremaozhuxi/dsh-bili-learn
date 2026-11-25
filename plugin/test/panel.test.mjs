@@ -46,6 +46,7 @@ async function renderPanel(statePlan) {
   globalThis.document = {
     createElement: () => ({ setAttribute() {}, remove() {}, style: {}, textContent: '' }),
     head: { appendChild() {} },
+    querySelector: () => null,
   }
   globalThis.fetch = async () => ({ ok: true, json: async () => ({ ok: false }) })
 
@@ -67,14 +68,16 @@ async function renderPanel(statePlan) {
   }
 
   const flat = []
+  const classes = []
   const walk = (node) => {
     if (node === null || node === undefined || node === false) return
     if (typeof node === 'string' || typeof node === 'number') { flat.push(String(node)); return }
     if (Array.isArray(node)) { node.forEach(walk); return }
+    if (node && node.props && node.props.className) classes.push(String(node.props.className))
     if (node && node.children) node.children.forEach(walk)
   }
   walk(tree)
-  return { text: flat.join(' | '), registered, mod }
+  return { text: flat.join(' | '), classes, registered, mod }
 }
 
 // 1) 首渲染 + 顶部常驻的节流块
@@ -107,6 +110,21 @@ const src = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
 if (!/throttleInfo \? tRow|tRow\('当前生效间隔'/.test(src) && !src.includes("tRow('当前生效间隔'")) {
   bad('面板里找不到间隔数字的渲染')
 } else ok('面板里渲染了「当前生效间隔」这一行')
+
+// 外壳结构：标题栏 / 左导航 / 内容区 / 状态栏 四件套必须在
+{
+  for (const cls of ['bl-shell', 'bl-titlebar', 'bl-rail', 'bl-content', 'bl-statusbar']) {
+    const hit = (first.classes || []).some((c) => c.split(/\s+/).includes(cls))
+    if (hit) ok('外壳有 .' + cls)
+    else bad('外壳缺少 .' + cls + '（实际：' + (first.classes || []).join(' , ') + '）')
+  }
+  const railCount = (first.classes || []).filter((c) => c.split(/\s+/).includes('bl-railitem')).length
+  if (railCount === 3) ok('左侧导航三项（设置 / 能做什么 / 状态）')
+  else bad('左侧导航项数不对：' + railCount)
+  const viewAnimated = (first.classes || []).some((c) => c.split(/\s+/).includes('bl-view'))
+  if (viewAnimated) ok('内容区包了动效层 .bl-view（切换淡入）')
+  else bad('内容区没有动效层')
+}
 
 if (failed) {
   console.error('面板测试失败 ' + failed + ' 项')

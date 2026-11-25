@@ -37,6 +37,49 @@ window.__ModuleLoader__.load({
     const MONO = 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace'
     const SANS = 'system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif'
 
+    /* ---------------------------------------------------------------- shell */
+    // 面板外壳的样式。只用 CSS 变量，不依赖 JS 令牌，方便注入一次全站生效。
+    // 动效节奏取自两条公开资料：界面动画的常用区间是 200-600ms；hover 这类
+    // 状态反馈要更快（约 100ms），否则会觉得迟钝。这里定成：hover 100ms、
+    // 内容淡入 220ms、按钮按下 90ms，全部 ease-out，并且尊重 prefers-reduced-motion。
+    const SHELL_CSS = [
+      '.bl-shell{display:flex;flex-direction:column;height:100%;min-height:0;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font-family:system-ui,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;box-sizing:border-box}',
+      '.bl-titlebar{display:flex;align-items:center;gap:10px;padding:9px 14px;border-bottom:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-2)}',
+      '.bl-body{flex:1;display:flex;min-height:0}',
+      '.bl-rail{width:132px;flex:0 0 132px;border-right:1px solid var(--dsw-alias-border-l1);padding:8px 0;background:var(--dsw-alias-bg-base)}',
+      '.bl-railitem{display:block;width:100%;text-align:left;border:0;background:transparent;color:var(--dsw-alias-label-secondary);font-size:13px;line-height:1;padding:9px 14px;cursor:pointer;border-left:2px solid transparent;transition:background 100ms ease,color 100ms ease,border-color 100ms ease}',
+      '.bl-railitem:hover{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary)}',
+      '.bl-railitem[data-on]{color:var(--dsw-alias-label-primary);font-weight:600;border-left-color:var(--dsw-alias-brand-primary);background:var(--dsw-alias-bg-layer-2)}',
+      '.bl-content{flex:1;min-width:0;overflow-y:auto;padding:14px 16px 22px}',
+      '.bl-view{animation:bl-fade 220ms cubic-bezier(.2,.8,.2,1) both}',
+      '.bl-statusbar{display:flex;align-items:center;gap:14px;padding:6px 14px;border-top:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-2);font-size:11.5px;line-height:1.5;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--dsw-alias-label-secondary)}',
+      '.bl-btn{transition:background 100ms ease,transform 90ms ease;border:1px solid var(--dsw-alias-border-l1);border-radius:5px;background:transparent;color:var(--dsw-alias-label-primary);font-size:12.5px;line-height:1;padding:6px 12px;cursor:pointer}',
+      '.bl-btn:hover{background:var(--dsw-alias-bg-layer-2)}',
+      '.bl-btn:active{transform:scale(.97)}',
+      '.bl-btn[disabled]{opacity:.5;cursor:default}',
+      '@keyframes bl-fade{from{opacity:0}to{opacity:1}}',
+      '@media (prefers-reduced-motion: reduce){.bl-view{animation:none}.bl-btn:active{transform:none}.bl-railitem{transition:none}}',
+    ].join('')
+
+    let shellCssReady = false
+    function injectShellCss() {
+      if (shellCssReady) return
+      try {
+        if (typeof document === 'undefined' || !document.head) return
+        if (typeof document.querySelector === 'function' && document.querySelector('style[data-bl-shell]')) {
+          shellCssReady = true
+          return
+        }
+        const el = document.createElement('style')
+        el.setAttribute('data-bl-shell', '')
+        el.textContent = SHELL_CSS
+        document.head.appendChild(el)
+        shellCssReady = true
+      } catch {
+        /* 注入失败不影响功能，只是少了外壳样式与动效 */
+      }
+    }
+
     /* ------------------------------------------------------------------ icon */
 
     function Icon(props) {
@@ -187,6 +230,7 @@ window.__ModuleLoader__.load({
     /* ----------------------------------------------------------------- panel */
 
     function Panel() {
+      injectShellCss()
       const [tab, setTab] = useState('settings')
       const [loaded, setLoaded] = useState(false)
       const [loadError, setLoadError] = useState('')
@@ -476,7 +520,7 @@ window.__ModuleLoader__.load({
           'div',
           {
             style: {
-              background: V.card, border: `1px solid ${V.line}`, borderRadius: 8,
+              background: V.card, border: `1px solid ${V.line}`, borderRadius: 4,
               padding: '12px 14px', marginBottom: 20,
             },
           },
@@ -560,7 +604,7 @@ window.__ModuleLoader__.load({
                   padding: '10px 13px',
                   background: on ? V.card : 'transparent',
                   border: `1px solid ${on ? V.brand : V.line}`,
-                  borderRadius: 8,
+                  borderRadius: 4,
                   cursor: 'pointer',
                   fontFamily: SANS,
                 },
@@ -665,7 +709,7 @@ window.__ModuleLoader__.load({
           'div',
           {
             style: {
-              background: V.card, border: `1px solid ${V.line}`, borderRadius: 8,
+              background: V.card, border: `1px solid ${V.line}`, borderRadius: 4,
               padding: '12px 14px', marginBottom: 20,
             },
           },
@@ -697,7 +741,7 @@ window.__ModuleLoader__.load({
           'div',
           {
             style: {
-              background: V.card, border: `1px solid ${V.line}`, borderRadius: 8,
+              background: V.card, border: `1px solid ${V.line}`, borderRadius: 4,
               padding: '12px 14px', marginBottom: 20,
             },
           },
@@ -763,7 +807,7 @@ window.__ModuleLoader__.load({
           'div',
           {
             style: {
-              background: V.card, border: `1px solid ${V.line}`, borderRadius: 8,
+              background: V.card, border: `1px solid ${V.line}`, borderRadius: 4,
               padding: '12px 14px', marginBottom: 20,
             },
           },
@@ -789,7 +833,7 @@ window.__ModuleLoader__.load({
           'div',
           {
             style: {
-              background: V.card, border: `1px solid ${V.line}`, borderRadius: 8,
+              background: V.card, border: `1px solid ${V.line}`, borderRadius: 4,
               padding: '12px 14px', marginBottom: 20,
             },
           },
@@ -884,8 +928,8 @@ window.__ModuleLoader__.load({
               'div',
               {
                 style: {
-                  marginTop: 14, padding: '11px 13px', background: V.card,
-                  border: `1px solid ${V.line}`, borderRadius: 8, fontSize: 12.5, lineHeight: 1.9,
+                  marginTop: 14, padding: '9px 11px', background: V.card,
+                  border: `1px solid ${V.line}`, borderRadius: 4, fontSize: 12.5, lineHeight: 1.9,
                 },
               },
               h('div', { style: { color: V.warn, marginBottom: 4 } }, '面板连不上设置接口（' + loadError + '）'),
@@ -913,8 +957,8 @@ window.__ModuleLoader__.load({
               'div',
               {
                 style: {
-                  marginTop: 14, padding: '11px 13px', background: V.card,
-                  border: `1px solid ${V.line}`, borderRadius: 8, fontSize: 12.5, lineHeight: 1.9,
+                  marginTop: 14, padding: '9px 11px', background: V.card,
+                  border: `1px solid ${V.line}`, borderRadius: 4, fontSize: 12.5, lineHeight: 1.9,
                 },
               },
               h('div', { style: { color: testResult.ok ? V.text : V.err } },
@@ -949,13 +993,13 @@ window.__ModuleLoader__.load({
                 key: name,
                 style: {
                   display: 'grid', gridTemplateColumns: '34px 1fr', gap: 12,
-                  alignItems: 'center', padding: '11px 13px',
-                  background: V.card, border: `1px solid ${V.line}`, borderRadius: 8,
+                  alignItems: 'center', padding: '9px 11px',
+                  background: V.card, border: `1px solid ${V.line}`, borderRadius: 4,
                 },
               },
               h('div', {
                 style: {
-                  width: 34, height: 34, borderRadius: 8, background: V.sunken,
+                  width: 34, height: 34, borderRadius: 4, background: V.sunken,
                   display: 'flex', alignItems: 'center', justifyContent: 'center', color: V.brand,
                 },
               }, h(Icon, { size: 17, active: true })),
@@ -991,7 +1035,7 @@ window.__ModuleLoader__.load({
         h(Label, null, '可用来源（插件启动时会自动测一遍）'),
         h(
           'div',
-          { style: { background: V.card, border: `1px solid ${V.line}`, borderRadius: 8, padding: '11px 13px', marginBottom: 8 } },
+          { style: { background: V.card, border: `1px solid ${V.line}`, borderRadius: 4, padding: '9px 11px', marginBottom: 6 } },
           !sources
             ? h('div', { style: { fontSize: 12.5, color: V.sub } }, probing ? '检测中…' : '还没测过')
             : !sources.ok
@@ -1001,7 +1045,7 @@ window.__ModuleLoader__.load({
                   null,
                   h(
                     'div',
-                    { style: { fontSize: 11.5, color: V.sub, marginBottom: 8 } },
+                    { style: { fontSize: 11.5, color: V.sub, marginBottom: 6 } },
                     '接口类（能自动用）',
                   ),
                   (sources.items || []).filter((r) => {
@@ -1041,7 +1085,7 @@ window.__ModuleLoader__.load({
         h(Label, null, '分别能拿到什么'),
         h(
           'div',
-          { style: { background: V.card, border: `1px solid ${V.line}`, borderRadius: 8, overflow: 'hidden' } },
+          { style: { background: V.card, border: `1px solid ${V.line}`, borderRadius: 4, overflow: 'hidden' } },
           CAPS.map(([name, tone, note], i) =>
             h(
               'div',
@@ -1078,8 +1122,8 @@ window.__ModuleLoader__.load({
           'div',
           {
             style: {
-              background: V.card, border: `1px solid ${V.line}`, borderRadius: 8,
-              padding: '11px 13px', fontSize: 12, color: V.sub, lineHeight: 2,
+              background: V.card, border: `1px solid ${V.line}`, borderRadius: 4,
+              padding: '9px 11px', fontSize: 12, color: V.sub, lineHeight: 2,
             },
           },
           h('div', null, '抓下来的笔记 ', h('span', { style: { fontFamily: MONO, color: V.text } }, '~/.dsh-bili-learn/harvests/')),
@@ -1096,7 +1140,7 @@ window.__ModuleLoader__.load({
         h(Label, null, '请求节流（风控相关）'),
         h(
           'div',
-          { style: { background: V.card, border: `1px solid ${V.line}`, borderRadius: 8, padding: '11px 13px', marginBottom: 8 } },
+          { style: { background: V.card, border: `1px solid ${V.line}`, borderRadius: 4, padding: '9px 11px', marginBottom: 6 } },
           !throttleInfo
             ? h('div', { style: { fontSize: 12.5, color: V.sub } }, '读取中…')
             : h(
@@ -1144,29 +1188,74 @@ window.__ModuleLoader__.load({
 
       return h(
         'div',
-        {
-          style: {
-            height: '100%', overflowY: 'auto', background: V.bg, color: V.text,
-            fontFamily: SANS, boxSizing: 'border-box', padding: '20px 24px 34px',
-          },
-        },
+        { className: 'bl-shell' },
         h(
           'div',
-          { style: { maxWidth: 720 } },
-          h('div', { style: { fontSize: 18, fontWeight: 600, color: V.text } }, 'B站视频小工具'),
-          h('div', { style: { fontSize: 12.5, color: V.sub, marginTop: 4, lineHeight: 1.6 } },
-            '把 B 站视频变成能读的笔记：字幕、评论、声音转文字、画面理解。'),
+          { className: 'bl-titlebar' },
+          h('span', {
+            style: {
+              width: 7, height: 7, borderRadius: '50%', flex: '0 0 auto',
+              background: throttleInfo && throttleInfo.cooldownSeconds > 0 ? V.err : V.ok,
+            },
+          }),
+          h('div', { style: { fontSize: 13.5, fontWeight: 600 } }, 'B站视频小工具'),
           h(
             'div',
-            { style: { display: 'flex', borderBottom: `1px solid ${V.line}`, marginTop: 16, marginBottom: 18 } },
-            h(Tab, { active: tab === 'settings', onClick: () => setTab('settings') }, '设置'),
-            h(Tab, { active: tab === 'tools', onClick: () => setTab('tools') }, '能做什么'),
-            h(Tab, { active: tab === 'status', onClick: () => setTab('status') }, '状态'),
+            { style: { marginLeft: 'auto', fontSize: 11.5, color: V.sub, fontFamily: MONO } },
+            throttleInfo ? '请求间隔 ' + throttleInfo.effectiveMs + 'ms' : '',
           ),
-          throttleBlock,
-          !loaded
-            ? h('div', { style: { fontSize: 12.5, color: V.sub } }, '正在读取设置…')
-            : tab === 'settings' ? settingsView : tab === 'tools' ? toolsView : statusView,
+        ),
+        h(
+          'div',
+          { className: 'bl-body' },
+          h(
+            'nav',
+            { className: 'bl-rail' },
+            [
+              ['settings', '设置'],
+              ['tools', '能做什么'],
+              ['status', '状态'],
+            ].map(([key, label]) =>
+              h(
+                'button',
+                {
+                  key,
+                  type: 'button',
+                  className: 'bl-railitem',
+                  'data-on': tab === key ? '' : undefined,
+                  onClick: () => setTab(key),
+                },
+                label,
+              ),
+            ),
+          ),
+          h(
+            'main',
+            { className: 'bl-content' },
+            throttleBlock,
+            h(
+              'div',
+              { key: tab, className: 'bl-view' },
+              !loaded
+                ? h('div', { style: { fontSize: 12.5, color: V.sub } }, '正在读取设置…')
+                : tab === 'settings' ? settingsView : tab === 'tools' ? toolsView : statusView,
+            ),
+          ),
+        ),
+        h(
+          'div',
+          { className: 'bl-statusbar' },
+          h('span', null, loaded ? '已载入' : '读取中'),
+          h('span', null, throttleInfo ? '节流 ' + throttleInfo.effectiveMs + 'ms' : '节流 —'),
+          throttleInfo && throttleInfo.quietSeconds > 0 ? h('span', null, '安静 ' + throttleInfo.quietSeconds + 's') : null,
+          throttleInfo && throttleInfo.cooldownSeconds > 0
+            ? h('span', { style: { color: V.warn } }, '冷却 ' + Math.ceil(throttleInfo.cooldownSeconds / 60) + 'm')
+            : null,
+          h(
+            'span',
+            { style: { marginLeft: 'auto', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } },
+            throttleInfo ? throttleInfo.file : '',
+          ),
         ),
       )
     }
